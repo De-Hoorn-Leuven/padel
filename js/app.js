@@ -572,6 +572,7 @@ function renderAgenda() {
         <h1>${esc(t("navAgenda"))}</h1>
         ${lines.length ? `<ul class="recurring-lines">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}
         <p class="lead">${esc(t("agendaIntroLimit"))} ${esc(t("agendaIntroTail"))}</p>
+        <p class="lead lead--share">${esc(t("agendaIntroShare"))}</p>
       </div>
       <div class="page-actions">
         ${bookLink("btn btn-book")}

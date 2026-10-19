@@ -65,7 +65,7 @@ const dict = {
     addedBy: "toegevoegd door {name}",
 
     newBooking: "Veld toevoegen",
-    newBookingIntro: "Reserveer eerst je veld bij de padelhal. Zet het daarna hier, zodat andere leden kunnen aansluiten.",
+    newBookingIntro: "Een eigen veld boek en betaal je zelf bij de padelhal. Zet het daarna hier, zodat andere leden kunnen aansluiten in de slots die je openzet.",
     date: "Datum",
     startTime: "Starttijd",
     duration: "Duur",
@@ -160,7 +160,8 @@ const dict = {
 
     recurringLine: "{name}: elke {day} van {start} tot {end}",
     recurringWhen: "Elke {day}, {start}–{end}",
-    agendaIntroTail: "Veld vol of liever een ander moment? Boek zelf een veld in de padelhal en zet het hier.",
+    agendaIntroTail: "Veld vol of liever een ander moment? Dan kan je altijd zelf een veld boeken bij de padelhal (via de knop hiernaast, you’re on your own!).",
+    agendaIntroShare: "Heb je een veldje geboekt en wil je het hier graag (gedeeltelijk) delen met onze community? Sjiek!! Klik dan op ‘Veld toevoegen’ en spread the word!",
     recurringTitle: "Vaste velden",
     recurringIntro: "Velden die elke week terugkomen. Breidt het aanbod uit, voeg dan een extra vast veld toe. Sessies waarin al iemand ingeschreven staat, houden hun oorspronkelijke uren.",
     newRecurring: "Vast veld toevoegen",
@@ -292,7 +293,7 @@ const dict = {
     addedBy: "added by {name}",
 
     newBooking: "Add a court",
-    newBookingIntro: "Reserve the court at the padel centre first. Then add it here so other members can join.",
+    newBookingIntro: "You book and pay for your own court at the padel centre. Then add it here so other members can join the slots you open.",
     date: "Date",
     startTime: "Start time",
     duration: "Duration",
@@ -387,7 +388,8 @@ const dict = {
 
     recurringLine: "{name}: every {day} from {start} to {end}",
     recurringWhen: "Every {day}, {start}–{end}",
-    agendaIntroTail: "Court full or prefer another time? Book a court at the padel centre and add it here.",
+    agendaIntroTail: "Court full or prefer another time? You can always book a court at the padel centre yourself (with the button next to this, you’re on your own!).",
+    agendaIntroShare: "Booked a court and happy to share it (or part of it) with our community here? Awesome!! Click ‘Add court’ and spread the word!",
     recurringTitle: "Weekly courts",
     recurringIntro: "Courts that come back every week. When the offer grows, add another weekly court. Sessions that already have sign-ups keep their original times.",
     newRecurring: "Add weekly court",

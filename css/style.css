@@ -212,6 +212,7 @@ input:focus, select:focus { border-color: var(--court); outline: none; box-shado
   padding-block: 2rem 1rem;
 }
 .page-head h1 { margin-bottom: 0.4rem; }
+.lead--share { margin-top: 0.5rem; color: var(--ink); font-weight: 500; }
 
 .day { padding-block: 1.25rem; display: grid; gap: 1rem; }
 .day + .day { border-top: 1px solid var(--rule); }
