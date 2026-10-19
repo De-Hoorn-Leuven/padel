@@ -15,6 +15,11 @@ export const appConfig = {
     full: "img/logo-full.png",         // volledig logo, lichte achtergrond
     fullDark: "img/logo-full-light.png" // volledig logo, donkere modus
   },
+  // Rode knop naar de reservatietool van de padelclub (leeg laten = geen knop)
+  externalBooking: {
+    label: "BOOK@PADEL CAPITAL",
+    url: "https://playtomic.com/clubs/padel-capital-leuven"
+  },
   banner: {
     large: "img/banner.jpg",
     small: "img/banner-small.jpg"

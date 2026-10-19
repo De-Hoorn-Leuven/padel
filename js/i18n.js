@@ -186,6 +186,8 @@ const dict = {
     byYou: "Aangemaakt door jou",
     byName: "Aangemaakt door {name}{company}",
 
+    opensNewTab: "opent in een nieuw tabblad",
+    notBookedYet: "Nog niet gereserveerd?",
     agendaIntroLimit: "Op een vast veld kan je telkens één lopende inschrijving hebben, zodat iedereen een kans krijgt.",
     periodFromTo: "van {from} t.e.m. {to}",
     periodTo: "t.e.m. {to}",
@@ -389,6 +391,8 @@ const dict = {
     byYou: "Created by you",
     byName: "Created by {name}{company}",
 
+    opensNewTab: "opens in a new tab",
+    notBookedYet: "Not booked yet?",
     agendaIntroLimit: "On a weekly court you can have one upcoming sign-up at a time, so everyone gets a chance.",
     periodFromTo: "from {from} to {to}",
     periodTo: "until {to}",

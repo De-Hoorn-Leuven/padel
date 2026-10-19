@@ -120,6 +120,20 @@ p { margin: 0; }
 .btn-ghost:hover { color: var(--ink); border-color: var(--rule); }
 .btn-small { min-height: 34px; padding: 0.3rem 0.7rem; font-size: 0.9rem; }
 .btn-block { width: 100%; }
+.btn-book {
+  background: #D52B1E; border-color: #D52B1E; color: #fff;
+  font-family: var(--font-display); font-size: 1.05rem; letter-spacing: 0.02em; text-decoration: none;
+}
+.btn-book:hover { background: #B32317; border-color: #B32317; }
+.page-head > div:first-child { flex: 1 1 420px; min-width: 0; }
+.page-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; flex: none; }
+@media (max-width: 640px) {
+  .page-actions { flex: 1 1 100%; }
+  .page-actions > * { flex: 1 1 100%; }
+}
+.text-link { color: var(--court); font-weight: 600; }
+@media (prefers-color-scheme: dark) { .text-link { color: #8FB4F0; } }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 .stack { display: grid; gap: 1rem; }
 .stack-tight { display: grid; gap: 0.4rem; }

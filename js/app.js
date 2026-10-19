@@ -497,6 +497,13 @@ function renderLogin() {
     </section>`;
 }
 
+// Externe link naar de reservatietool van de club, opent in een nieuw tabblad.
+function bookLink(cls) {
+  const x = appConfig.externalBooking;
+  if (!x?.url) return "";
+  return `<a class="${cls}" href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.label || x.url)}<span class="visually-hidden"> (${esc(t("opensNewTab"))})</span></a>`;
+}
+
 function renderAgenda() {
   const today = ymd(new Date());
   const lines = activeRecurring().filter((r) => !r.endDate || r.endDate >= today).map((r) => {
@@ -517,7 +524,10 @@ function renderAgenda() {
         ${lines.length ? `<ul class="recurring-lines">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}
         <p class="lead">${esc(t("agendaIntroLimit"))} ${esc(t("agendaIntroTail"))}</p>
       </div>
-      <button type="button" class="btn btn-primary" data-action="new-booking">${esc(t("newBooking"))}</button>
+      <div class="page-actions">
+        ${bookLink("btn btn-book")}
+        <button type="button" class="btn btn-primary" data-action="new-booking">${esc(t("newBooking"))}</button>
+      </div>
     </div>
     ${groups.length
       ? groups.map((g) => `
@@ -798,6 +808,7 @@ function openNewBooking(b = null) {
   openModal(`
     <h2>${esc(editing ? (community ? t("editSessionTitle") : t("editBookingTitle")) : t("newBooking"))}</h2>
     <p class="muted">${esc(editing ? (community ? t("editSessionIntro") : t("editBookingIntro")) : t("newBookingIntro"))}</p>
+    ${!editing && appConfig.externalBooking?.url ? `<p class="muted">${esc(t("notBookedYet"))} ${bookLink("text-link")}</p>` : ""}
     <form data-form="${editing ? "edit-booking" : "new-booking"}" data-booking-form class="stack">
       <div class="row">
         <label>${esc(t("date"))}<input type="date" name="date" min="${today}" value="${esc(b?.date || today)}" required${community ? " disabled" : ""}></label>
