@@ -1,0 +1,69 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function memberPath() { return /databases/$(db)/documents/members/$(request.auth.uid); }
+    function isMember() { return signedIn() && exists(memberPath()); }
+    function isAdmin() { return isMember() && get(memberPath()).data.get('role', '') == 'admin'; }
+
+    // Max 4 spelers per slot, 1 of 2 slots per boeking.
+    function slotsOk(d) {
+      return d.slots is list
+        && d.slots.size() >= 1 && d.slots.size() <= 2
+        && d.slots[0].players is list && d.slots[0].players.size() <= 4
+        && (d.slots.size() == 1 || (d.slots[1].players is list && d.slots[1].players.size() <= 4));
+    }
+
+    // Instellingen van het vaste communityveld
+    match /config/settings {
+      allow read: if isMember();
+      allow write: if isAdmin();
+    }
+
+    // Uitnodigingscode: alleen via de Firebase-console te beheren
+    match /config/invite {
+      allow read, write: if false;
+    }
+
+    match /members/{memberId} {
+      allow read: if isMember() || (signedIn() && request.auth.uid == memberId);
+
+      // Registreren kan alleen met de juiste uitnodigingscode, en je kan jezelf geen admin maken.
+      allow create: if signedIn()
+        && request.auth.uid == memberId
+        && request.resource.data.inviteCode == get(/databases/$(db)/documents/config/invite).data.code
+        && !('role' in request.resource.data);
+
+      allow update: if (signedIn() && request.auth.uid == memberId
+                         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'inviteCode']))
+                    || isAdmin();
+
+      allow delete: if isAdmin();
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if isMember();
+
+      allow create: if isMember() && slotsOk(request.resource.data) && (
+          // Eigen bijgeboekt veld
+          (request.resource.data.type == 'member' && request.resource.data.createdBy == request.auth.uid)
+          // Communitysessie wordt aangemaakt bij de eerste inschrijving (of door een admin bij annulatie)
+          || (request.resource.data.type == 'community'
+              && bookingId == 'community_' + request.resource.data.date
+              && (request.resource.data.cancelled == false || isAdmin()))
+        );
+
+      // Eigenaar en admins mogen alles wijzigen; andere leden alleen de spelerslijsten.
+      allow update: if isMember() && slotsOk(request.resource.data) && (
+          resource.data.createdBy == request.auth.uid
+          || isAdmin()
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['slots', 'updatedAt'])
+        );
+
+      allow delete: if isMember() && (
+          (resource.data.type == 'member' && resource.data.createdBy == request.auth.uid) || isAdmin()
+        );
+    }
+  }
+}
