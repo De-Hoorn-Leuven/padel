@@ -22,9 +22,15 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Uitnodigingscode: alleen via de Firebase-console te beheren
+    // Uitnodigingscode: enkel admins kunnen ze lezen en wijzigen
     match /config/invite {
-      allow read, write: if false;
+      allow read, write: if isAdmin();
+    }
+
+    // Extra vaste velden
+    match /recurring/{recId} {
+      allow read: if isMember();
+      allow write: if isAdmin();
     }
 
     match /members/{memberId} {
@@ -53,7 +59,8 @@ service cloud.firestore {
           (request.resource.data.type == 'member' && request.resource.data.createdBy == request.auth.uid)
           // Communitysessie wordt aangemaakt bij de eerste inschrijving (of door een admin bij annulatie)
           || (request.resource.data.type == 'community'
-              && bookingId == 'community_' + request.resource.data.date
+              && (bookingId == 'community_' + request.resource.data.date
+                  || bookingId == 'community_' + request.resource.data.get('recurringId', '') + '_' + request.resource.data.date)
               && (request.resource.data.cancelled == false || isAdmin()))
         );
 

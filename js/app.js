@@ -24,6 +24,7 @@ const state = {
   loading: true,
   members: {},
   settings: { ...DEFAULT_SETTINGS },
+  recurring: [], // extra vaste velden uit de collectie "recurring"
   bookings: [],
   view: "agenda",
   memberSearch: "",
@@ -81,6 +82,7 @@ function toast(msg, isError = false) {
 }
 
 function errMsg(e) {
+  if (e?.i18n) return t(e.i18n, e.vars || {});
   const map = { full: "errFull", already: "errAlready", closed: "errClosed", cancelled: "errCancelled", gone: "errGone", slotHasPlayers: "errSlotHasPlayers" };
   if (map[e?.message]) return t(map[e.message]);
   if (e?.code === "permission-denied") return t("errPermission");
@@ -134,6 +136,11 @@ function startListeners() {
     refresh();
   }, onListenError));
 
+  listeners.push(onSnapshot(collection(db, "recurring"), (snap) => {
+    state.recurring = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    refresh();
+  }, onListenError));
+
   const q = query(collection(db, "bookings"), where("date", ">=", ymd(new Date())), orderBy("date"));
   listeners.push(onSnapshot(q, (snap) => {
     state.bookings = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -143,34 +150,98 @@ function startListeners() {
 
 function onListenError(e) { toast(errMsg(e), true); }
 
-function communityDates() {
+// Alle vaste velden: het oorspronkelijke (config/settings, id "default") plus de extra uit "recurring".
+function recurringList() {
+  const def = { ...state.settings, id: "default" };
+  return [def, ...state.recurring]
+    .map((r) => ({ ...r, duration: Number(r.duration) || 90, weekday: Number(r.weekday) }))
+    .sort((a, b) => ((a.weekday + 6) % 7) - ((b.weekday + 6) % 7) || a.start.localeCompare(b.start));
+}
+const activeRecurring = () => recurringList().filter((r) => r.active !== false);
+const recurringName = (r) => r?.name || t("community");
+
+// Het oorspronkelijke vaste veld houdt zijn oude id-vorm, zodat bestaande inschrijvingen blijven kloppen.
+const sessionId = (recId, date) => (recId === "default" ? `community_${date}` : `community_${recId}_${date}`);
+
+// Data binnen de afgesproken periode. Zonder einddatum tonen we weeksAhead weken vooruit.
+function recurringDates(r) {
   const out = [];
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() + ((Number(state.settings.weekday) - d.getDay() + 7) % 7));
-  for (let i = 0; i < (appConfig.weeksAhead || 8); i++) {
-    out.push(ymd(d));
+  const today = ymd(new Date());
+  const from = r.startDate && r.startDate > today ? r.startDate : today;
+  const d = parseYmd(from);
+  d.setDate(d.getDate() + ((r.weekday - d.getDay() + 7) % 7));
+  const limit = r.endDate || null;
+  const max = limit ? 60 : (appConfig.weeksAhead || 8);
+  for (let i = 0; i < max; i++) {
+    const day = ymd(d);
+    if (limit && day > limit) break;
+    out.push(day);
     d.setDate(d.getDate() + 7);
   }
   return out;
 }
 
-function virtualCommunity(date) {
-  const s = state.settings;
-  const duration = Number(s.duration);
+const inPeriod = (r, date) => (!r.startDate || date >= r.startDate) && (!r.endDate || date <= r.endDate);
+const recurringFor = (b) => recurringList().find((r) => r.id === (b.recurringId || "default"));
+const shortDate = (s) => new Intl.DateTimeFormat(locale(), { day: "numeric", month: "long" }).format(parseYmd(s));
+
+function periodText(r) {
+  const today = ymd(new Date());
+  const from = r.startDate && r.startDate > today ? shortDate(r.startDate) : null;
+  const to = r.endDate ? shortDate(r.endDate) : null;
+  if (from && to) return t("periodFromTo", { from, to });
+  if (to) return t("periodTo", { to });
+  if (from) return t("periodFrom", { from });
+  return "";
+}
+
+// Max. één lopende inschrijving per lid op een vast veld. Een gast telt mee voor wie hem toevoegde.
+// Admins mogen altijd corrigeren.
+function limitConflict(b, player) {
+  if (b.type !== "community" || isAdmin()) return null;
+  const rec = recurringFor(b);
+  if (!rec || rec.onePerMember === false) return null;
+  const who = player.uid || uid();
+  const today = ymd(new Date());
+  return state.bookings.find((x) =>
+    x.type === "community" && x.id !== b.id && !x.cancelled && x.date >= today &&
+    (x.recurringId || "default") === rec.id && inPeriod(rec, x.date) &&
+    x.slots?.some((s) => s.players?.some((p) => p.uid === who || (!p.uid && p.addedBy === who)))) || null;
+}
+
+function limitError(b, player) {
+  const other = limitConflict(b, player);
+  if (!other) return null;
+  const who = player.uid || uid();
+  const err = new Error("limit");
+  err.i18n = who === uid() ? "errLimitSelf" : "errLimitOther";
+  err.vars = { who: fullName(state.members[who]) || player.name, date: dateLabel(other.date), name: recurringName(recurringFor(b)) };
+  return err;
+}
+
+function virtualCommunity(r, date) {
   return {
-    id: `community_${date}`, type: "community", date, start: s.start, duration,
-    split: !!s.split && duration === 90, location: s.location || "", cancelled: false,
+    id: sessionId(r.id, date), type: "community", recurringId: r.id, name: r.name || "",
+    date, start: r.start, duration: r.duration,
+    split: !!r.split && r.duration === 90, location: r.location || "", cancelled: false,
     createdBy: null, virtual: true,
-    slots: buildSlots(s.start, duration, !!s.split, [true, true])
+    slots: buildSlots(r.start, r.duration, !!r.split, [true, true])
   };
 }
 
 function agendaItems() {
   const today = ymd(new Date());
   const items = new Map();
-  for (const d of communityDates()) items.set(`community_${d}`, virtualCommunity(d));
-  for (const b of state.bookings) items.set(b.id, b);
+  for (const r of activeRecurring()) {
+    for (const d of recurringDates(r)) items.set(sessionId(r.id, d), virtualCommunity(r, d));
+  }
+  for (const b of state.bookings) {
+    if (b.type === "community") {
+      const rec = recurringFor(b);
+      if (rec && !inPeriod(rec, b.date)) continue;
+    }
+    items.set(b.id, b);
+  }
   return [...items.values()]
     .filter((b) => b.date >= today)
     .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start) || (a.type === "community" ? -1 : 1));
@@ -210,6 +281,8 @@ async function mutateBooking(b, fn) {
 
 async function addPlayer(b, si, player) {
   try {
+    const limit = limitError(b, player);
+    if (limit) throw limit;
     await mutateBooking(b, (slots, data) => {
       const slot = slots[si];
       if (!slot) throw new Error("gone");
@@ -298,6 +371,8 @@ function refresh() {
   } else if (state.view === "admin") {
     const el = document.getElementById("admin-members");
     if (el) el.innerHTML = adminMembersHtml();
+    const rec = document.getElementById("admin-recurring");
+    if (rec) rec.innerHTML = adminRecurringHtml();
   }
 }
 
@@ -372,6 +447,7 @@ function renderMain() {
   if (state.view === "admin" && !isAdmin()) state.view = "agenda";
   const views = { agenda: renderAgenda, members: renderMembers, profile: renderProfile, admin: renderAdmin };
   $main.innerHTML = views[state.view]();
+  if (state.view === "admin") loadInviteCode();
 }
 
 function heroCourt() {
@@ -422,10 +498,12 @@ function renderLogin() {
 }
 
 function renderAgenda() {
-  const s = state.settings;
-  const end = fromMin(toMin(s.start) + Number(s.duration));
-  const introKey = s.split && Number(s.duration) === 90 ? "agendaIntro" : "agendaIntroCustom";
   const today = ymd(new Date());
+  const lines = activeRecurring().filter((r) => !r.endDate || r.endDate >= today).map((r) => {
+    const base = t("recurringLine", { name: recurringName(r), day: weekdayName(r.weekday), start: r.start, end: fromMin(toMin(r.start) + r.duration) });
+    const period = periodText(r);
+    return period ? `${base}, ${period}` : base;
+  });
   const groups = [];
   for (const b of agendaItems()) {
     const last = groups[groups.length - 1];
@@ -436,7 +514,8 @@ function renderAgenda() {
     <div class="page-head">
       <div>
         <h1>${esc(t("navAgenda"))}</h1>
-        <p class="lead">${esc(t(introKey, { day: weekdayName(s.weekday), start: s.start, end }))}</p>
+        ${lines.length ? `<ul class="recurring-lines">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}
+        <p class="lead">${esc(t("agendaIntroLimit"))} ${esc(t("agendaIntroTail"))}</p>
       </div>
       <button type="button" class="btn btn-primary" data-action="new-booking">${esc(t("newBooking"))}</button>
     </div>
@@ -452,9 +531,14 @@ function renderAgenda() {
 function renderBooking(b) {
   const owner = b.createdBy ? state.members[b.createdBy] : null;
   const mine = b.createdBy && b.createdBy === uid();
+  const ownerName = owner ? fullName(owner) : "?";
   const title = b.type === "community"
-    ? t("community")
-    : mine ? t("yourBooking") : t("memberBooking", { name: owner ? fullName(owner) : "?" });
+    ? (() => { const rec = recurringList().find((r) => r.id === (b.recurringId || "default")); return rec ? recurringName(rec) : b.name || t("community"); })()
+    : b.title || (mine ? t("yourBooking") : t("memberBooking", { name: ownerName }));
+  // Met een eigen naam blijft de maker zichtbaar, zodat je weet wie je iets kan vragen.
+  const byline = b.type === "member" && b.title
+    ? t(mine ? "byYou" : "byName", { name: ownerName, company: owner?.company ? ` (${owner.company})` : "" })
+    : "";
   const end = fromMin(toMin(b.start) + Number(b.duration));
   const where = b.type === "community" ? b.location : b.note;
   const actions = [];
@@ -473,6 +557,7 @@ function renderBooking(b) {
         <div>
           <p class="tag">${esc(b.type === "community" ? t("tagCommunity") : t("tagMember"))}</p>
           <h3>${esc(title)}</h3>
+          ${byline ? `<p class="byline">${esc(byline)}</p>` : ""}
           <p class="booking-sub">${b.start}–${end}${where ? `, ${esc(where)}` : ""}</p>
         </div>
         ${actions.length ? `<div class="booking-actions">${actions.join("")}</div>` : ""}
@@ -584,23 +669,20 @@ function memberListHtml() {
 }
 
 function renderAdmin() {
-  const s = state.settings;
-  const days = [1, 2, 3, 4, 5, 6, 0];
   return `
     <section class="narrow narrow--wide">
-      <h1>${esc(t("adminTitle"))}</h1>
-      <p class="lead">${esc(t("adminIntro"))}</p>
-      <form data-form="settings" class="stack panel">
-        <div class="row">
-          <label>${esc(t("weekday"))}
-            <select name="weekday">${days.map((d) => `<option value="${d}"${Number(s.weekday) === d ? " selected" : ""}>${esc(weekdayName(d))}</option>`).join("")}</select>
-          </label>
-          <label>${esc(t("startTime"))}<input type="time" name="start" step="900" required value="${esc(s.start)}"></label>
-        </div>
-        ${durationField(Number(s.duration))}
-        <label class="check"><input type="checkbox" name="split"${s.split ? " checked" : ""}> ${esc(t("splitLabel"))}</label>
-        <label>${esc(t("location"))}<input name="location" maxlength="80" value="${esc(s.location)}"></label>
-        <div><button class="btn btn-primary">${esc(t("saveSettings"))}</button></div>
+      <h1>${esc(t("navAdmin"))}</h1>
+
+      <h2 class="section-title">${esc(t("recurringTitle"))}</h2>
+      <p class="lead">${esc(t("recurringIntro"))}</p>
+      <div id="admin-recurring">${adminRecurringHtml()}</div>
+      <div><button type="button" class="btn" data-action="new-recurring">${esc(t("newRecurring"))}</button></div>
+
+      <h2 class="section-title">${esc(t("inviteTitle"))}</h2>
+      <p class="lead">${esc(t("inviteIntro"))}</p>
+      <form data-form="invite" class="inline-form panel">
+        <label>${esc(t("inviteCode"))}<input name="code" id="invite-code" required minlength="4" maxlength="40" autocomplete="off" placeholder="${esc(t("loading"))}"></label>
+        <button class="btn btn-primary">${esc(t("saveInvite"))}</button>
       </form>
 
       <h2 class="section-title">${esc(t("adminMembersTitle"))}</h2>
@@ -613,6 +695,67 @@ function renderAdmin() {
         <div><button type="button" class="btn" data-action="cleanup-scan">${esc(t("cleanupScan"))}</button></div>
       </div>
     </section>`;
+}
+
+function adminRecurringHtml() {
+  return `<ul class="member-list member-list--admin">${recurringList().map((r) => `
+    <li class="${r.active === false || (r.endDate && r.endDate < ymd(new Date())) ? "is-blocked" : ""}">
+      <span class="who">
+        <span class="who-name">${esc(recurringName(r))}${r.active === false ? ` <span class="badge badge--off">${esc(t("inactiveBadge"))}</span>` : ""}${r.endDate && r.endDate < ymd(new Date()) ? ` <span class="badge badge--off">${esc(t("expiredBadge"))}</span>` : ""}</span>
+        <span class="who-meta">${esc(t("recurringWhen", { day: weekdayName(r.weekday), start: r.start, end: fromMin(toMin(r.start) + r.duration) }))}${r.split && r.duration === 90 ? ", 2 × 45 min" : ""}${r.location ? `, ${esc(r.location)}` : ""}${periodText(r) ? `, ${esc(periodText(r))}` : ""}${r.onePerMember !== false ? `, ${esc(t("onePerMemberShort"))}` : ""}</span>
+      </span>
+      <span class="row-actions">
+        <button type="button" class="btn btn-ghost btn-small" data-action="edit-recurring" data-rec="${esc(r.id)}">${esc(t("editBooking"))}</button>
+        ${r.id === "default" ? "" : `<button type="button" class="btn btn-ghost btn-small btn-danger" data-action="delete-recurring" data-rec="${esc(r.id)}">${esc(t("delete"))}</button>`}
+      </span>
+    </li>`).join("")}</ul>`;
+}
+
+function openRecurring(r) {
+  const days = [1, 2, 3, 4, 5, 6, 0];
+  const v = r || { weekday: 4, start: "09:00", duration: 90, split: true, location: "", name: "", active: true, onePerMember: true };
+  openModal(`
+    <h2>${esc(r ? t("editRecurringTitle") : t("newRecurring"))}</h2>
+    <p class="muted">${esc(t("recurringModalIntro"))}</p>
+    <form data-form="recurring" class="stack">
+      <label>${esc(t("recurringName"))}<input name="name" maxlength="50" value="${esc(v.name || "")}" placeholder="${esc(t("community"))}"></label>
+      <div class="row">
+        <label>${esc(t("weekday"))}
+          <select name="weekday">${days.map((d) => `<option value="${d}"${Number(v.weekday) === d ? " selected" : ""}>${esc(weekdayName(d))}</option>`).join("")}</select>
+        </label>
+        <label>${esc(t("startTime"))}<input type="time" name="start" step="900" required value="${esc(v.start)}"></label>
+      </div>
+      ${durationField(Number(v.duration))}
+      <label class="check"><input type="checkbox" name="split"${v.split ? " checked" : ""}> ${esc(t("splitLabel"))}</label>
+      <label>${esc(t("location"))}<input name="location" maxlength="80" value="${esc(v.location || "")}"></label>
+      <fieldset class="stack-tight">
+        <legend>${esc(t("periodLegend"))}</legend>
+        <div class="row">
+          <label>${esc(t("periodStart"))}<input type="date" name="startDate" value="${esc(v.startDate || "")}"></label>
+          <label>${esc(t("periodEnd"))}<input type="date" name="endDate" value="${esc(v.endDate || "")}"></label>
+        </div>
+        <span class="help">${esc(t("periodHelp"))}</span>
+      </fieldset>
+      <label class="check"><input type="checkbox" name="onePerMember"${v.onePerMember !== false ? " checked" : ""}> ${esc(t("onePerMember"))}</label>
+      <span class="help">${esc(t("onePerMemberHelp"))}</span>
+      <label class="check"><input type="checkbox" name="active"${v.active !== false ? " checked" : ""}> ${esc(t("recurringActive"))}</label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-modal">${esc(t("cancel"))}</button>
+        <button class="btn btn-primary">${esc(r ? t("saveChanges") : t("newRecurring"))}</button>
+      </div>
+    </form>`, { recurringId: r?.id || null });
+}
+
+async function loadInviteCode() {
+  const input = document.getElementById("invite-code");
+  if (!input) return;
+  try {
+    const snap = await getDoc(doc(db, "config", "invite"));
+    input.value = snap.exists() ? snap.data().code || "" : "";
+    input.placeholder = "";
+  } catch (err) {
+    toast(errMsg(err), true);
+  }
 }
 
 function adminMembersHtml() {
@@ -663,6 +806,14 @@ function openNewBooking(b = null) {
       ${durationField(Number(b?.duration || 90))}
       <label class="check" id="split-label"><input type="checkbox" name="split"${b?.split ? " checked" : ""}> ${esc(t("splitLabel"))}</label>
       <div id="slot-options" class="stack"></div>
+      ${community ? "" : `
+      <label>${esc(t("bookingTitle"))}
+        <span class="input-with-btn">
+          <input name="title" maxlength="50" value="${esc(b?.title || "")}" placeholder="${esc(t("bookingTitlePlaceholder"))}">
+          ${state.member?.company ? `<button type="button" class="btn btn-small" data-action="use-company">${esc(t("useCompany"))}</button>` : ""}
+        </span>
+        <span class="help">${esc(t("bookingTitleHelp"))}</span>
+      </label>`}
       <label>${esc(community ? t("location") : t("note"))}<input name="note" maxlength="80" value="${esc(where || "")}"></label>
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" data-action="close-modal">${esc(t("cancel"))}</button>
@@ -715,25 +866,30 @@ function openJoin(b, si) {
   const slot = b.slots[si];
   const inSlot = new Set((slot.players || []).filter((p) => p.uid).map((p) => p.uid));
   const others = activeMembers().filter((m) => !inSlot.has(m.id) && m.id !== uid()).sort(byName);
+  const selfErr = limitError(b, { uid: uid() });
   openModal(`
     <h2>${esc(t("addPlayer"))}</h2>
     <p class="muted">${esc(dateLabel(b.date))}, ${slot.start}–${slot.end}</p>
     <div class="stack">
-      ${!inSlot.has(uid()) ? `<button type="button" class="btn btn-primary btn-block" data-action="add-me">${esc(t("addMe"))}</button>` : ""}
+      ${selfErr ? `<p class="notice">${esc(t(selfErr.i18n, selfErr.vars))}</p>` : ""}
+      ${!inSlot.has(uid()) && !selfErr ? `<button type="button" class="btn btn-primary btn-block" data-action="add-me">${esc(t("addMe"))}</button>` : ""}
       ${others.length ? `
         <form data-form="add-member" class="inline-form">
           <label>${esc(t("addMember"))}
             <select name="member" required>
               <option value="">${esc(t("chooseMember"))}</option>
-              ${others.map((m) => `<option value="${esc(m.id)}">${esc(fullName(m))}${m.company ? `, ${esc(m.company)}` : ""}${m.level ? ` (${esc(levelLabel(m.level))})` : ""}</option>`).join("")}
+              ${others.map((m) => {
+                const busy = !!limitConflict(b, { uid: m.id });
+                return `<option value="${esc(m.id)}"${busy ? " disabled" : ""}>${esc(fullName(m))}${m.company ? `, ${esc(m.company)}` : ""}${m.level ? ` (${esc(levelLabel(m.level))})` : ""}${busy ? ` – ${esc(t("alreadyBooked"))}` : ""}</option>`;
+              }).join("")}
             </select>
           </label>
           <button class="btn">${esc(t("add"))}</button>
         </form>` : ""}
-      <form data-form="add-guest" class="inline-form">
+      ${selfErr ? "" : `<form data-form="add-guest" class="inline-form">
         <label>${esc(t("addGuest"))}<input name="guest" required maxlength="60" placeholder="${esc(t("guestName"))}" autocomplete="off"></label>
         <button class="btn">${esc(t("add"))}</button>
-      </form>
+      </form>`}
     </div>`, { bookingId: b.id, slot: si });
 }
 
@@ -804,6 +960,32 @@ document.addEventListener("click", async (e) => {
     case "new-booking":
       openNewBooking();
       break;
+
+    case "use-company": {
+      const input = el.closest("form")?.elements.namedItem("title");
+      if (input) { input.value = state.member?.company || ""; input.focus(); }
+      break;
+    }
+
+    case "edit-recurring": {
+      const r = recurringList().find((x) => x.id === el.dataset.rec);
+      openRecurring(r || null);
+      break;
+    }
+
+    case "new-recurring":
+      openRecurring(null);
+      break;
+
+    case "delete-recurring": {
+      const r = state.recurring.find((x) => x.id === el.dataset.rec);
+      if (!r || !confirm(t("deleteRecurringConfirm", { name: recurringName(r) }))) return;
+      try {
+        await deleteDoc(doc(db, "recurring", r.id));
+        toast(t("recurringDeleted"));
+      } catch (err) { toast(errMsg(err), true); }
+      break;
+    }
 
     case "edit-booking": {
       const b = findBooking(el.dataset.booking);
@@ -985,17 +1167,36 @@ document.addEventListener("submit", async (e) => {
         break;
       }
 
-      case "settings": {
+      case "recurring": {
+        const id = state.modalCtx?.recurringId;
         const duration = Number(E.namedItem("duration").value);
-        await setDoc(doc(db, "config", "settings"), {
+        const data = {
+          name: E.namedItem("name").value.trim(),
           weekday: Number(E.namedItem("weekday").value),
           start: E.namedItem("start").value,
           duration,
           split: duration === 90 && E.namedItem("split").checked,
           location: E.namedItem("location").value.trim(),
+          active: E.namedItem("active").checked,
+          onePerMember: E.namedItem("onePerMember").checked,
+          startDate: E.namedItem("startDate").value || null,
+          endDate: E.namedItem("endDate").value || null,
           updatedAt: serverTimestamp()
-        });
+        };
+        if (data.startDate && data.endDate && data.endDate < data.startDate) throw Object.assign(new Error("period"), { i18n: "errPeriod" });
+        if (id === "default") await setDoc(doc(db, "config", "settings"), data, { merge: true });
+        else if (id) await updateDoc(doc(db, "recurring", id), data);
+        else await addDoc(collection(db, "recurring"), { ...data, createdAt: serverTimestamp() });
+        closeModal();
         toast(t("settingsSaved"));
+        break;
+      }
+
+      case "invite": {
+        const code = E.namedItem("code").value.trim();
+        if (!confirm(t("inviteConfirm", { code }))) break;
+        await setDoc(doc(db, "config", "invite"), { code, updatedAt: serverTimestamp() });
+        toast(t("inviteSaved"));
         break;
       }
 
@@ -1011,6 +1212,7 @@ document.addEventListener("submit", async (e) => {
         slots.forEach((s, i) => { if (play === "all" || play === String(i)) s.players.push(me); });
         await addDoc(collection(db, "bookings"), {
           type: "member", date, start, duration, split, slots,
+          title: E.namedItem("title").value.trim(),
           note: E.namedItem("note").value.trim(),
           cancelled: false,
           createdBy: uid(),
@@ -1042,7 +1244,7 @@ document.addEventListener("submit", async (e) => {
           slots.splice(0, slots.length, ...newSlots);
           return b.type === "community"
             ? { start, duration, split, location: note }
-            : { date, start, duration, split, note };
+            : { date, start, duration, split, note, title: E.namedItem("title").value.trim() };
         });
         closeModal();
         toast(t("changesSaved"));
