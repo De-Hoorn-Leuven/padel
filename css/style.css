@@ -54,6 +54,8 @@ p { margin: 0; }
 
 .wrap { width: min(1080px, 100% - 2rem); margin-inline: auto; }
 .narrow { max-width: 620px; display: grid; gap: 1.25rem; padding-block: 2rem 4rem; }
+.narrow--wide { max-width: 860px; }
+.narrow--wide > form { max-width: 620px; }
 .lead { color: var(--muted); max-width: 62ch; }
 .muted { color: var(--muted); }
 .help { display: block; color: var(--muted); font-size: 0.875rem; font-weight: 400; }
@@ -309,7 +311,25 @@ button.spot--empty:hover { background: rgba(255, 255, 255, 0.16); border-style: 
   .court.is-full .court-field { background: var(--court-deep); }
 }
 
-/* ---------- members ---------- */
+/* ---------- members & admin ---------- */
+
+.section-title { font-size: 1.8rem; margin-top: 1.5rem; }
+.badge {
+  font-family: var(--font-body); font-size: 0.75rem; font-weight: 600; vertical-align: 2px;
+  padding: 0.05rem 0.45rem; border-radius: 999px; background: var(--court); color: #fff;
+}
+.badge--off { background: var(--danger); }
+.row-actions { margin-left: auto; display: flex; flex: none; justify-content: flex-end; gap: 0.15rem; }
+.member-list--admin li.is-blocked .avatar, .member-list--admin li.is-blocked .who { opacity: 0.55; }
+.btn-danger { color: var(--danger); }
+.btn-danger:hover { color: var(--danger); border-color: var(--danger); }
+.btn-danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn-danger-solid:hover { filter: brightness(0.92); border-color: var(--danger); }
+@media (max-width: 640px) {
+  .member-list--admin li { flex-wrap: wrap; }
+  .row-actions { margin-left: 0; width: 100%; justify-content: flex-start; }
+}
+
 
 .member-list { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-m); }
 .member-list li { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; }

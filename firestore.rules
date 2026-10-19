@@ -4,7 +4,8 @@ service cloud.firestore {
 
     function signedIn() { return request.auth != null; }
     function memberPath() { return /databases/$(db)/documents/members/$(request.auth.uid); }
-    function isMember() { return signedIn() && exists(memberPath()); }
+    // Lid = profiel bestaat en toegang is niet ingetrokken
+    function isMember() { return signedIn() && exists(memberPath()) && get(memberPath()).data.get('blocked', false) != true; }
     function isAdmin() { return isMember() && get(memberPath()).data.get('role', '') == 'admin'; }
 
     // Max 4 spelers per slot, 1 of 2 slots per boeking.
@@ -33,10 +34,12 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.auth.uid == memberId
         && request.resource.data.inviteCode == get(/databases/$(db)/documents/config/invite).data.code
-        && !('role' in request.resource.data);
+        && !('role' in request.resource.data)
+        && !('blocked' in request.resource.data);
 
-      allow update: if (signedIn() && request.auth.uid == memberId
-                         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'inviteCode']))
+      // Eigen profiel aanpassen kan, maar niet je rol of toegang; een geblokkeerd lid kan niets meer wijzigen.
+      allow update: if (isMember() && request.auth.uid == memberId
+                         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'inviteCode', 'blocked']))
                     || isAdmin();
 
       allow delete: if isAdmin();
@@ -56,8 +59,9 @@ service cloud.firestore {
 
       // Eigenaar en admins mogen alles wijzigen; andere leden alleen de spelerslijsten.
       allow update: if isMember() && slotsOk(request.resource.data) && (
-          resource.data.createdBy == request.auth.uid
-          || isAdmin()
+          isAdmin()
+          || (resource.data.createdBy == request.auth.uid
+              && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['type', 'createdBy']))
           || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['slots', 'updatedAt'])
         );
 

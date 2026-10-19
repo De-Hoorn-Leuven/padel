@@ -5,7 +5,8 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection,
-  query, where, orderBy, onSnapshot, runTransaction, serverTimestamp
+  query, where, orderBy, onSnapshot, runTransaction, serverTimestamp,
+  getDocs, writeBatch, deleteField
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { firebaseConfig, appConfig } from "./config.js";
 import { t, getLang, setLang, locale, LEVELS } from "./i18n.js";
@@ -27,7 +28,8 @@ const state = {
   view: "agenda",
   memberSearch: "",
   modalCtx: null,
-  authMode: "signin" // "signin" of "signup"
+  authMode: "signin", // "signin" of "signup"
+  blocked: false
 };
 let listeners = [];
 
@@ -48,6 +50,7 @@ const toMin = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); return h *
 const fromMin = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 const uid = () => state.user?.uid;
 const isAdmin = () => state.member?.role === "admin";
+const activeMembers = () => Object.values(state.members).filter((m) => !m.blocked);
 const fullName = (m) => `${m?.firstName ?? ""} ${m?.lastName ?? ""}`.trim();
 const levelLabel = (l) => (l === "beginner" ? t("beginner") : l || "");
 const initials = (name) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
@@ -78,7 +81,7 @@ function toast(msg, isError = false) {
 }
 
 function errMsg(e) {
-  const map = { full: "errFull", already: "errAlready", closed: "errClosed", cancelled: "errCancelled", gone: "errGone" };
+  const map = { full: "errFull", already: "errAlready", closed: "errClosed", cancelled: "errCancelled", gone: "errGone", slotHasPlayers: "errSlotHasPlayers" };
   if (map[e?.message]) return t(map[e.message]);
   if (e?.code === "permission-denied") return t("errPermission");
   const authMap = {
@@ -121,6 +124,7 @@ function startListeners() {
     const m = {};
     snap.forEach((d) => { m[d.id] = { id: d.id, ...d.data() }; });
     state.members = m;
+    if (m[uid()]?.blocked) { lockOut(); return; }
     if (m[uid()]) state.member = m[uid()];
     refresh();
   }, onListenError));
@@ -244,6 +248,7 @@ onAuthStateChanged(auth, async (user) => {
   state.member = null;
   state.members = {};
   state.bookings = [];
+  state.blocked = false;
   if (!user) {
     state.loading = false;
     render();
@@ -253,7 +258,9 @@ onAuthStateChanged(auth, async (user) => {
   render();
   try {
     const snap = await getDoc(doc(db, "members", user.uid));
-    if (snap.exists()) {
+    if (snap.exists() && snap.data().blocked) {
+      state.blocked = true;
+    } else if (snap.exists()) {
       state.member = { id: snap.id, ...snap.data() };
       startListeners();
     }
@@ -263,6 +270,14 @@ onAuthStateChanged(auth, async (user) => {
   state.loading = false;
   render();
 });
+
+function lockOut() {
+  stopListeners();
+  closeModal();
+  state.member = null;
+  state.blocked = true;
+  render();
+}
 
 /* ---------- rendering ---------- */
 
@@ -280,6 +295,9 @@ function refresh() {
   else if (state.view === "members") {
     const el = document.getElementById("member-list");
     if (el) el.innerHTML = memberListHtml();
+  } else if (state.view === "admin") {
+    const el = document.getElementById("admin-members");
+    if (el) el.innerHTML = adminMembersHtml();
   }
 }
 
@@ -330,6 +348,15 @@ function renderMain() {
   }
   if (!state.user) {
     $main.innerHTML = renderLogin();
+    return;
+  }
+  if (state.blocked) {
+    $main.innerHTML = `
+      <section class="narrow">
+        <h1>${esc(t("blockedTitle"))}</h1>
+        <p class="lead">${esc(t("blockedText"))}</p>
+        <div><button type="button" class="btn" data-action="signout">${esc(t("signOut"))}</button></div>
+      </section>`;
     return;
   }
   if (!state.member) {
@@ -431,6 +458,9 @@ function renderBooking(b) {
   const end = fromMin(toMin(b.start) + Number(b.duration));
   const where = b.type === "community" ? b.location : b.note;
   const actions = [];
+  if (!b.cancelled && (mine || isAdmin())) {
+    actions.push(`<button type="button" class="btn btn-ghost btn-small" data-action="edit-booking" data-booking="${esc(b.id)}">${esc(t("editBooking"))}</button>`);
+  }
   if (b.type === "member" && (mine || isAdmin())) {
     actions.push(`<button type="button" class="btn btn-ghost btn-small" data-action="delete-booking" data-booking="${esc(b.id)}">${esc(t("deleteBooking"))}</button>`);
   }
@@ -500,7 +530,7 @@ function renderEmpty(b, si, can) {
 
 function profileForm(m, mode) {
   return `
-    <form data-form="${mode}" class="stack panel">
+    <form data-form="${mode}" class="stack${mode === "admin-member" ? "" : " panel"}">
       <div class="row">
         <label>${esc(t("firstName"))}<input name="firstName" required maxlength="40" autocomplete="given-name" value="${esc(m.firstName)}"></label>
         <label>${esc(t("lastName"))}<input name="lastName" required maxlength="40" autocomplete="family-name" value="${esc(m.lastName)}"></label>
@@ -541,7 +571,7 @@ function renderMembers() {
 
 function memberListHtml() {
   const q = state.memberSearch.trim().toLowerCase();
-  const list = Object.values(state.members)
+  const list = activeMembers()
     .filter((m) => !q || `${fullName(m)} ${m.company || ""} ${levelLabel(m.level)}`.toLowerCase().includes(q))
     .sort(byName);
   if (!list.length) return `<p class="empty">${esc(t("noMembers"))}</p>`;
@@ -557,7 +587,7 @@ function renderAdmin() {
   const s = state.settings;
   const days = [1, 2, 3, 4, 5, 6, 0];
   return `
-    <section class="narrow">
+    <section class="narrow narrow--wide">
       <h1>${esc(t("adminTitle"))}</h1>
       <p class="lead">${esc(t("adminIntro"))}</p>
       <form data-form="settings" class="stack panel">
@@ -572,7 +602,39 @@ function renderAdmin() {
         <label>${esc(t("location"))}<input name="location" maxlength="80" value="${esc(s.location)}"></label>
         <div><button class="btn btn-primary">${esc(t("saveSettings"))}</button></div>
       </form>
+
+      <h2 class="section-title">${esc(t("adminMembersTitle"))}</h2>
+      <p class="lead">${esc(t("adminMembersIntro"))}</p>
+      <div id="admin-members">${adminMembersHtml()}</div>
+
+      <h2 class="section-title">${esc(t("cleanupTitle"))}</h2>
+      <p class="lead">${esc(t("cleanupIntro"))}</p>
+      <div id="cleanup" class="panel stack">
+        <div><button type="button" class="btn" data-action="cleanup-scan">${esc(t("cleanupScan"))}</button></div>
+      </div>
     </section>`;
+}
+
+function adminMembersHtml() {
+  const list = Object.values(state.members).sort((a, b) => (a.blocked === b.blocked ? byName(a, b) : a.blocked ? 1 : -1));
+  if (!list.length) return `<p class="empty">${esc(t("noMembers"))}</p>`;
+  return `<ul class="member-list member-list--admin">${list.map((m) => {
+    const self = m.id === uid();
+    return `
+    <li class="${m.blocked ? "is-blocked" : ""}">
+      <span class="avatar">${esc(initials(fullName(m)))}</span>
+      <span class="who">
+        <span class="who-name">${esc(fullName(m))}${m.role === "admin" ? ` <span class="badge">${esc(t("adminBadge"))}</span>` : ""}${m.blocked ? ` <span class="badge badge--off">${esc(t("blockedBadge"))}</span>` : ""}</span>
+        <span class="who-meta">${m.level ? `<span class="lvl">${esc(levelLabel(m.level))}</span>` : ""}${esc(m.company || "")}</span>
+      </span>
+      <span class="row-actions">
+        <button type="button" class="btn btn-ghost btn-small" data-action="edit-member" data-member="${esc(m.id)}">${esc(t("editBooking"))}</button>
+        ${self ? "" : `
+        <button type="button" class="btn btn-ghost btn-small" data-action="toggle-admin" data-member="${esc(m.id)}">${esc(m.role === "admin" ? t("removeAdmin") : t("makeAdmin"))}</button>
+        <button type="button" class="btn btn-ghost btn-small${m.blocked ? "" : " btn-danger"}" data-action="toggle-block" data-member="${esc(m.id)}">${esc(m.blocked ? t("unblock") : t("block"))}</button>`}
+      </span>
+    </li>`;
+  }).join("")}</ul>`;
 }
 
 function durationField(value) {
@@ -585,31 +647,35 @@ function durationField(value) {
 
 /* ---------- modals ---------- */
 
-function openNewBooking() {
+function openNewBooking(b = null) {
   const today = ymd(new Date());
+  const editing = !!b;
+  const community = b?.type === "community";
+  const where = community ? b.location : b?.note;
   openModal(`
-    <h2>${esc(t("newBooking"))}</h2>
-    <p class="muted">${esc(t("newBookingIntro"))}</p>
-    <form data-form="new-booking" class="stack">
+    <h2>${esc(editing ? (community ? t("editSessionTitle") : t("editBookingTitle")) : t("newBooking"))}</h2>
+    <p class="muted">${esc(editing ? (community ? t("editSessionIntro") : t("editBookingIntro")) : t("newBookingIntro"))}</p>
+    <form data-form="${editing ? "edit-booking" : "new-booking"}" data-booking-form class="stack">
       <div class="row">
-        <label>${esc(t("date"))}<input type="date" name="date" min="${today}" value="${today}" required></label>
-        <label>${esc(t("startTime"))}<input type="time" name="start" step="900" value="18:00" required></label>
+        <label>${esc(t("date"))}<input type="date" name="date" min="${today}" value="${esc(b?.date || today)}" required${community ? " disabled" : ""}></label>
+        <label>${esc(t("startTime"))}<input type="time" name="start" step="900" value="${esc(b?.start || "18:00")}" required></label>
       </div>
-      ${durationField(90)}
-      <label class="check" id="split-label"><input type="checkbox" name="split"> ${esc(t("splitLabel"))}</label>
+      ${durationField(Number(b?.duration || 90))}
+      <label class="check" id="split-label"><input type="checkbox" name="split"${b?.split ? " checked" : ""}> ${esc(t("splitLabel"))}</label>
       <div id="slot-options" class="stack"></div>
-      <label>${esc(t("note"))}<input name="note" maxlength="80"></label>
+      <label>${esc(community ? t("location") : t("note"))}<input name="note" maxlength="80" value="${esc(where || "")}"></label>
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" data-action="close-modal">${esc(t("cancel"))}</button>
-        <button class="btn btn-primary">${esc(t("addBooking"))}</button>
+        <button class="btn btn-primary">${esc(editing ? t("saveChanges") : t("addBooking"))}</button>
       </div>
-    </form>`);
+    </form>`, editing ? { bookingId: b.id, editing: true, community, initialOpen: b.slots.map((s) => s.open !== false) } : null);
   updateSlotOptions();
 }
 
 function updateSlotOptions() {
-  const f = $modalBody.querySelector('form[data-form="new-booking"]');
+  const f = $modalBody.querySelector("form[data-booking-form]");
   if (!f) return;
+  const ctx = state.modalCtx || {};
   const E = f.elements;
   const dur = Number(E.namedItem("duration").value);
   const split = E.namedItem("split");
@@ -622,12 +688,17 @@ function updateSlotOptions() {
   const prevOpen = [...f.querySelectorAll('input[name="open"]')].map((i) => i.checked);
   const prevPlay = E.namedItem("play")?.value;
   const box = f.querySelector("#slot-options");
-  box.innerHTML = `
+  const openSet = ctx.community ? "" : `
     <fieldset class="stack-tight">
       <legend>${esc(t("openForMembers"))}</legend>
-      ${slots.map((s, i) => `<label class="check"><input type="checkbox" name="open" value="${i}"${(prevOpen[i] ?? true) ? " checked" : ""}> ${s.start}–${s.end}</label>`).join("")}
+      ${slots.map((s, i) => `<label class="check"><input type="checkbox" name="open" value="${i}"${(prevOpen[i] ?? ctx.initialOpen?.[i] ?? true) ? " checked" : ""}> ${s.start}–${s.end}</label>`).join("")}
       <span class="help">${esc(t("openHelp"))}</span>
-    </fieldset>
+    </fieldset>`;
+  if (ctx.editing) {
+    box.innerHTML = openSet;
+    return;
+  }
+  box.innerHTML = `${openSet}
     <label>${esc(t("iPlay"))}
       <select name="play">
         ${slots.length === 2
@@ -643,7 +714,7 @@ function updateSlotOptions() {
 function openJoin(b, si) {
   const slot = b.slots[si];
   const inSlot = new Set((slot.players || []).filter((p) => p.uid).map((p) => p.uid));
-  const others = Object.values(state.members).filter((m) => !inSlot.has(m.id) && m.id !== uid()).sort(byName);
+  const others = activeMembers().filter((m) => !inSlot.has(m.id) && m.id !== uid()).sort(byName);
   openModal(`
     <h2>${esc(t("addPlayer"))}</h2>
     <p class="muted">${esc(dateLabel(b.date))}, ${slot.start}–${slot.end}</p>
@@ -733,6 +804,92 @@ document.addEventListener("click", async (e) => {
     case "new-booking":
       openNewBooking();
       break;
+
+    case "edit-booking": {
+      const b = findBooking(el.dataset.booking);
+      if (b) openNewBooking(b);
+      break;
+    }
+
+    case "edit-member": {
+      const m = state.members[el.dataset.member];
+      if (!m) return;
+      openModal(`
+        <h2>${esc(t("editMemberTitle"))}</h2>
+        ${profileForm(m, "admin-member")}`, { memberId: m.id });
+      break;
+    }
+
+    case "toggle-admin": {
+      const m = state.members[el.dataset.member];
+      if (!m || m.id === uid()) return;
+      const makeAdmin = m.role !== "admin";
+      if (!confirm(t(makeAdmin ? "makeAdminConfirm" : "removeAdminConfirm", { name: fullName(m) }))) return;
+      try {
+        await updateDoc(doc(db, "members", m.id), { role: makeAdmin ? "admin" : deleteField() });
+      } catch (err) { toast(errMsg(err), true); }
+      break;
+    }
+
+    case "toggle-block": {
+      const m = state.members[el.dataset.member];
+      if (!m || m.id === uid()) return;
+      try {
+        if (m.blocked) {
+          await updateDoc(doc(db, "members", m.id), { blocked: false });
+          toast(t("unblocked", { name: fullName(m) }));
+          return;
+        }
+        if (!confirm(t("blockConfirm", { name: fullName(m) }))) return;
+        await updateDoc(doc(db, "members", m.id), { blocked: true });
+        // Haal het lid uit alle komende inschrijvingen
+        let removed = 0;
+        for (const b of state.bookings) {
+          if (!b.slots?.some((s) => s.players?.some((p) => p.uid === m.id))) continue;
+          await mutateBooking(b, (slots) => {
+            slots.forEach((s) => {
+              const before = s.players.length;
+              s.players = s.players.filter((p) => p.uid !== m.id);
+              removed += before - s.players.length;
+            });
+          });
+        }
+        toast(t("blocked", { name: fullName(m), n: removed }));
+      } catch (err) { toast(errMsg(err), true); }
+      break;
+    }
+
+    case "cleanup-scan": {
+      const box = document.getElementById("cleanup");
+      try {
+        const snap = await getDocs(query(collection(db, "bookings"), where("date", "<", ymd(new Date()))));
+        state.oldBookings = snap.docs.map((d) => d.id);
+        box.innerHTML = state.oldBookings.length
+          ? `<p>${esc(t("cleanupFound", { n: state.oldBookings.length }))}</p>
+             <div><button type="button" class="btn btn-danger-solid" data-action="cleanup-run">${esc(t("cleanupRun", { n: state.oldBookings.length }))}</button></div>`
+          : `<p>${esc(t("cleanupNone"))}</p>`;
+      } catch (err) { toast(errMsg(err), true); }
+      break;
+    }
+
+    case "cleanup-run": {
+      const ids = state.oldBookings || [];
+      if (!ids.length || !confirm(t("cleanupConfirm", { n: ids.length }))) return;
+      el.disabled = true;
+      try {
+        for (let i = 0; i < ids.length; i += 400) {
+          const batch = writeBatch(db);
+          ids.slice(i, i + 400).forEach((id) => batch.delete(doc(db, "bookings", id)));
+          await batch.commit();
+        }
+        document.getElementById("cleanup").innerHTML = `<p>${esc(t("cleanupDone", { n: ids.length }))}</p>`;
+        state.oldBookings = [];
+      } catch (err) {
+        el.disabled = false;
+        toast(errMsg(err), true);
+      }
+      break;
+    }
 
     case "join": {
       const b = findBooking(el.dataset.booking);
@@ -865,6 +1022,48 @@ document.addEventListener("submit", async (e) => {
         break;
       }
 
+      case "edit-booking": {
+        const ctx = state.modalCtx;
+        const b = ctx && findBooking(ctx.bookingId);
+        if (!b) throw new Error("gone");
+        const date = b.type === "community" ? b.date : E.namedItem("date").value;
+        const start = E.namedItem("start").value;
+        const duration = Number(E.namedItem("duration").value);
+        const split = duration === 90 && E.namedItem("split").checked;
+        const open = b.type === "community"
+          ? [true, true]
+          : [...f.querySelectorAll('input[name="open"]')].map((i) => i.checked);
+        const newSlots = buildSlots(start, duration, split, open);
+        const note = E.namedItem("note").value.trim();
+        await mutateBooking(b, (slots) => {
+          const players = slots.map((s) => s.players);
+          if (players.slice(newSlots.length).some((p) => p.length)) throw new Error("slotHasPlayers");
+          newSlots.forEach((s, i) => { s.players = players[i] || []; });
+          slots.splice(0, slots.length, ...newSlots);
+          return b.type === "community"
+            ? { start, duration, split, location: note }
+            : { date, start, duration, split, note };
+        });
+        closeModal();
+        toast(t("changesSaved"));
+        break;
+      }
+
+      case "admin-member": {
+        const id = state.modalCtx?.memberId;
+        if (!id) break;
+        await updateDoc(doc(db, "members", id), {
+          firstName: E.namedItem("firstName").value.trim(),
+          lastName: E.namedItem("lastName").value.trim(),
+          company: E.namedItem("company").value.trim(),
+          level: E.namedItem("level").value,
+          updatedAt: serverTimestamp()
+        });
+        closeModal();
+        toast(t("profileSaved"));
+        break;
+      }
+
       case "add-member": {
         const id = E.namedItem("member").value;
         const m = state.members[id];
@@ -897,7 +1096,7 @@ document.addEventListener("input", (e) => {
 });
 
 document.addEventListener("change", (e) => {
-  if (e.target.closest('form[data-form="new-booking"]') && ["duration", "split", "start"].includes(e.target.name)) {
+  if (e.target.closest("form[data-booking-form]") && ["duration", "split", "start"].includes(e.target.name)) {
     updateSlotOptions();
   }
 });
