@@ -8,6 +8,16 @@ export const firebaseConfig = {
 };
 
 export const appConfig = {
-  name: "Community Padel",
+  name: "De Hoorn Padel Hub",
+  shortName: "Padel Hub", // titel onder het logo op het inlogscherm
+  logo: {
+    mark: "img/logo-mark-white.png",   // zeshoek, in de blauwe balk
+    full: "img/logo-full.png",         // volledig logo, lichte achtergrond
+    fullDark: "img/logo-full-light.png" // volledig logo, donkere modus
+  },
+  banner: {
+    large: "img/banner.jpg",
+    small: "img/banner-small.jpg"
+  },
   weeksAhead: 8 // hoeveel weken vooruit het vaste communityveld getoond wordt
 };

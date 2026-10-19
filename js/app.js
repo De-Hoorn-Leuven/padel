@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup,
-  sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink, signOut
+  signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, signOut
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection,
@@ -27,12 +27,13 @@ const state = {
   view: "agenda",
   memberSearch: "",
   modalCtx: null,
-  linkSentTo: null
+  authMode: "signin" // "signin" of "signup"
 };
 let listeners = [];
 
 const $top = document.getElementById("topbar");
 const $main = document.getElementById("main");
+const $banner = document.getElementById("banner");
 const $modal = document.getElementById("modal");
 const $modalBody = document.getElementById("modal-body");
 const $toast = document.getElementById("toast");
@@ -80,6 +81,17 @@ function errMsg(e) {
   const map = { full: "errFull", already: "errAlready", closed: "errClosed", cancelled: "errCancelled", gone: "errGone" };
   if (map[e?.message]) return t(map[e.message]);
   if (e?.code === "permission-denied") return t("errPermission");
+  const authMap = {
+    "auth/invalid-credential": "errLogin",
+    "auth/wrong-password": "errLogin",
+    "auth/user-not-found": "errLogin",
+    "auth/invalid-email": "errEmail",
+    "auth/email-already-in-use": "errEmailInUse",
+    "auth/weak-password": "errWeakPassword",
+    "auth/too-many-requests": "errTooMany",
+    "auth/network-request-failed": "errNetwork"
+  };
+  if (authMap[e?.code]) return t(authMap[e.code]);
   console.error(e);
   return t("errGeneric", { msg: e?.message || String(e) });
 }
@@ -226,22 +238,6 @@ async function removePlayer(b, si, p) {
 
 /* ---------- auth ---------- */
 
-async function completeEmailLink() {
-  if (!isSignInWithEmailLink(auth, location.href)) return;
-  let email = null;
-  try { email = localStorage.getItem("padel.email"); } catch { /* ignore */ }
-  if (!email) email = window.prompt(t("confirmEmail"));
-  if (email) {
-    try {
-      await signInWithEmailLink(auth, email, location.href);
-      try { localStorage.removeItem("padel.email"); } catch { /* ignore */ }
-    } catch (e) {
-      toast(errMsg(e), true);
-    }
-  }
-  history.replaceState(null, "", location.pathname);
-}
-
 onAuthStateChanged(auth, async (user) => {
   stopListeners();
   state.user = user;
@@ -287,13 +283,21 @@ function refresh() {
   }
 }
 
+// Zeshoek in de balk; lukt het laden niet, dan valt het terug op het balletje.
+function logoHtml(cls) {
+  const src = appConfig.logo?.mark;
+  const ball = `<span class="brand-mark" aria-hidden="true"${src ? " hidden" : ""}></span>`;
+  if (!src) return ball;
+  return `<img class="${cls}" src="${esc(src)}" alt="" onerror="this.nextElementSibling.hidden=false;this.remove()">${ball}`;
+}
+
 function renderTop() {
   const nav = state.member
     ? [["agenda", "navAgenda"], ["members", "navMembers"], ["profile", "navProfile"], ...(isAdmin() ? [["admin", "navAdmin"]] : [])]
     : [];
   $top.innerHTML = `
     <div class="wrap topbar-inner">
-      <a class="brand" href="#" data-action="view" data-view="agenda"><span class="brand-mark" aria-hidden="true"></span>${esc(appConfig.name)}</a>
+      <a class="brand" href="#" data-action="view" data-view="agenda">${logoHtml("brand-logo")}${esc(appConfig.name)}</a>
       <nav class="nav" aria-label="Menu">
         ${nav.map(([v, k]) => `<button type="button" class="nav-link${state.view === v ? " is-active" : ""}" data-action="view" data-view="${v}"${state.view === v ? ' aria-current="page"' : ""}>${esc(t(k))}</button>`).join("")}
       </nav>
@@ -303,7 +307,23 @@ function renderTop() {
     </div>`;
 }
 
+// Grote foto op het inlogscherm, smalle strook boven de agenda, niets op de andere pagina's.
+function renderBanner() {
+  const b = appConfig.banner;
+  const kind = !b || state.loading ? null
+    : !state.user ? "hero"
+    : state.member && state.view === "agenda" ? "strip"
+    : null;
+  if ($banner.dataset.kind === (kind || "")) return;
+  $banner.dataset.kind = kind || "";
+  $banner.className = kind ? `banner banner--${kind}` : "";
+  $banner.innerHTML = kind
+    ? `<img src="${esc(b.large)}" srcset="${esc(b.small)} 900w, ${esc(b.large)} 2000w" sizes="100vw" alt="" decoding="async"${kind === "hero" ? ' fetchpriority="high"' : ""}>`
+    : "";
+}
+
 function renderMain() {
+  renderBanner();
   if (state.loading) {
     $main.innerHTML = `<p class="loading">${esc(t("loading"))}</p>`;
     return;
@@ -345,16 +365,31 @@ function renderLogin() {
     <section class="login">
       <div class="login-art">${heroCourt()}</div>
       <div class="login-box">
-        <h1 class="display">${esc(appConfig.name)}</h1>
+        ${appConfig.logo?.full && !appConfig.banner
+          ? `<picture class="login-logo">
+               ${appConfig.logo.fullDark ? `<source srcset="${esc(appConfig.logo.fullDark)}" media="(prefers-color-scheme: dark)">` : ""}
+               <img src="${esc(appConfig.logo.full)}" alt="De Hoorn">
+             </picture>
+             <h1 class="display">${esc(appConfig.shortName || appConfig.name)}</h1>`
+          : `<h1 class="display">${esc(appConfig.name)}</h1>`}
         <p class="lead">${esc(t("signInIntro"))}</p>
         <button type="button" class="btn btn-primary btn-block" data-action="google">${esc(t("google"))}</button>
         <div class="or"><span>${esc(t("or"))}</span></div>
-        ${state.linkSentTo
-          ? `<p class="notice">${t("linkSent", { email: `<strong>${esc(state.linkSentTo)}</strong>` })}</p>`
-          : `<form data-form="email-link" class="stack">
-               <label>${esc(t("emailLabel"))}<input type="email" name="email" required autocomplete="email"></label>
-               <button class="btn btn-block">${esc(t("sendLink"))}</button>
-             </form>`}
+        <form data-form="email-auth" class="stack">
+          <label>${esc(t("emailLabel"))}<input type="email" name="email" required autocomplete="email"></label>
+          <label>${esc(t("passwordLabel"))}
+            <input type="password" name="password" required minlength="8"
+              autocomplete="${state.authMode === "signup" ? "new-password" : "current-password"}">
+            ${state.authMode === "signup" ? `<span class="help">${esc(t("passwordHelp"))}</span>` : ""}
+          </label>
+          <button class="btn btn-block">${esc(state.authMode === "signup" ? t("createAccount") : t("signInEmail"))}</button>
+        </form>
+        <div class="auth-links">
+          ${state.authMode === "signup"
+            ? `<button type="button" class="link" data-action="auth-mode" data-mode="signin">${esc(t("haveAccount"))}</button>`
+            : `<button type="button" class="link" data-action="auth-mode" data-mode="signup">${esc(t("noAccount"))}</button>
+               <button type="button" class="link" data-action="forgot">${esc(t("forgotPassword"))}</button>`}
+        </div>
       </div>
     </section>`;
 }
@@ -663,9 +698,33 @@ document.addEventListener("click", async (e) => {
 
     case "signout":
       state.view = "agenda";
-      state.linkSentTo = null;
+      state.authMode = "signin";
       await signOut(auth);
       break;
+
+    case "auth-mode":
+      state.authMode = el.dataset.mode;
+      renderMain();
+      $main.querySelector('input[name="email"]')?.focus();
+      break;
+
+    case "forgot": {
+      const input = $main.querySelector('input[name="email"]');
+      const email = input?.value.trim();
+      if (!email) {
+        toast(t("forgotNeedEmail"), true);
+        input?.focus();
+        return;
+      }
+      try {
+        await sendPasswordResetEmail(auth, email);
+      } catch (err) {
+        // Bij een onbekend adres geven we bewust dezelfde melding, zodat niet te achterhalen valt wie lid is.
+        if (err.code !== "auth/user-not-found") { toast(errMsg(err), true); return; }
+      }
+      toast(t("resetSent", { email }));
+      break;
+    }
 
     case "close-modal":
       closeModal();
@@ -733,12 +792,11 @@ document.addEventListener("submit", async (e) => {
 
   try {
     switch (f.dataset.form) {
-      case "email-link": {
+      case "email-auth": {
         const email = E.namedItem("email").value.trim();
-        await sendSignInLinkToEmail(auth, email, { url: location.origin + location.pathname, handleCodeInApp: true });
-        try { localStorage.setItem("padel.email", email); } catch { /* ignore */ }
-        state.linkSentTo = email;
-        renderMain();
+        const password = E.namedItem("password").value;
+        if (state.authMode === "signup") await createUserWithEmailAndPassword(auth, email, password);
+        else await signInWithEmailAndPassword(auth, email, password);
         break;
       }
 
@@ -848,4 +906,3 @@ document.addEventListener("change", (e) => {
 
 setLang(getLang());
 render();
-completeEmailLink();
