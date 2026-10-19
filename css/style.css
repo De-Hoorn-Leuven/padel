@@ -247,6 +247,27 @@ input:focus, select:focus { border-color: var(--court); outline: none; box-shado
 .slots { display: grid; gap: 1rem; }
 .slots--2 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); }
 
+/* ---------- door code ---------- */
+
+.door {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 0.75rem;
+  padding: 0.6rem 0.9rem; border-radius: var(--radius-s);
+  background: color-mix(in srgb, var(--ball) 35%, var(--surface)); border: 1px solid color-mix(in srgb, var(--ball) 70%, var(--rule));
+}
+.door--empty { background: var(--paper); border-style: dashed; border-color: var(--rule); }
+.door-label { font-weight: 600; }
+.door--empty .door-label { font-weight: 500; color: var(--muted); }
+.door .btn { margin-left: auto; }
+.door-code {
+  font-family: var(--font-display); font-size: 1.5rem; letter-spacing: 0.12em; line-height: 1;
+  font-variant-numeric: tabular-nums; user-select: all;
+}
+.codes-list .door-code { font-size: 1.25rem; }
+.codes-list li.needs-code { box-shadow: inset 4px 0 0 var(--danger); }
+.badge--ball { background: var(--ball); color: var(--ball-ink); }
+.badge--muted { background: var(--rule); color: var(--muted); }
+.role-select { width: auto; min-height: 34px; padding: 0.2rem 0.5rem; font-size: 0.9rem; }
+
 /* ---------- the court ---------- */
 
 .court { display: grid; gap: 0.45rem; }

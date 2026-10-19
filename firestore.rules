@@ -7,6 +7,8 @@ service cloud.firestore {
     // Lid = profiel bestaat en toegang is niet ingetrokken
     function isMember() { return signedIn() && exists(memberPath()) && get(memberPath()).data.get('blocked', false) != true; }
     function isAdmin() { return isMember() && get(memberPath()).data.get('role', '') == 'admin'; }
+    // Manager padelhal (of admin): beheert de deurcodes
+    function isManager() { return isMember() && get(memberPath()).data.get('role', '') in ['manager', 'admin']; }
 
     // Max 4 spelers per slot, 1 of 2 slots per boeking.
     function slotsOk(d) {
@@ -51,6 +53,15 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Deurcode van de padelhal per sessie.
+    // Lezen: manager/admin, of wie in die sessie speelt (of er een gast toevoegde).
+    match /doorCodes/{bookingId} {
+      allow read: if isManager()
+        || (isMember() && request.auth.uid in
+            get(/databases/$(db)/documents/bookings/$(bookingId)).data.get('accessUids', []));
+      allow write: if isManager();
+    }
+
     match /bookings/{bookingId} {
       allow read: if isMember();
 
@@ -69,7 +80,7 @@ service cloud.firestore {
           isAdmin()
           || (resource.data.createdBy == request.auth.uid
               && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['type', 'createdBy']))
-          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['slots', 'updatedAt'])
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['slots', 'accessUids', 'updatedAt'])
         );
 
       allow delete: if isMember() && (

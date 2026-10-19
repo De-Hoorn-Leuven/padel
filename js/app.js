@@ -30,8 +30,11 @@ const state = {
   memberSearch: "",
   modalCtx: null,
   authMode: "signin", // "signin" of "signup"
-  blocked: false
+  blocked: false,
+  codes: {} // deurcodes per sessie-id, alleen die je mag zien
 };
+const codeListeners = new Map();
+let managerCodesUnsub = null;
 let listeners = [];
 
 const $top = document.getElementById("topbar");
@@ -51,6 +54,11 @@ const toMin = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); return h *
 const fromMin = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 const uid = () => state.user?.uid;
 const isAdmin = () => state.member?.role === "admin";
+const isManager = () => ["manager", "admin"].includes(state.member?.role);
+
+// Wie de deurcode van een sessie mag zien: de spelers zelf, en wie een gast toevoegde.
+const accessUidsOf = (slots) =>
+  [...new Set(slots.flatMap((s) => (s.players || []).map((p) => p.uid || p.addedBy)).filter(Boolean))];
 const activeMembers = () => Object.values(state.members).filter((m) => !m.blocked);
 const fullName = (m) => `${m?.firstName ?? ""} ${m?.lastName ?? ""}`.trim();
 const levelLabel = (l) => (l === "beginner" ? t("beginner") : l || "");
@@ -118,6 +126,42 @@ $modal.addEventListener("close", () => { state.modalCtx = null; });
 function stopListeners() {
   listeners.forEach((u) => u());
   listeners = [];
+  codeListeners.forEach((u) => u());
+  codeListeners.clear();
+  if (managerCodesUnsub) { managerCodesUnsub(); managerCodesUnsub = null; }
+  state.codes = {};
+}
+
+// Managers en admins volgen alle deurcodes; leden enkel die van sessies waarin ze staan.
+// De Firestore rules dwingen dat ook af, dit volgt gewoon dezelfde lijn.
+function syncCodeListeners() {
+  if (!state.member) return;
+  if (isManager()) {
+    codeListeners.forEach((u) => u());
+    codeListeners.clear();
+    if (!managerCodesUnsub) {
+      managerCodesUnsub = onSnapshot(collection(db, "doorCodes"), (snap) => {
+        const c = {};
+        snap.forEach((d) => { c[d.id] = d.data(); });
+        state.codes = c;
+        refresh();
+      }, onListenError);
+    }
+    return;
+  }
+  if (managerCodesUnsub) { managerCodesUnsub(); managerCodesUnsub = null; state.codes = {}; }
+  const want = new Set(state.bookings.filter((b) => (b.accessUids || []).includes(uid())).map((b) => b.id));
+  for (const [id, unsub] of codeListeners) {
+    if (!want.has(id)) { unsub(); codeListeners.delete(id); delete state.codes[id]; }
+  }
+  for (const id of want) {
+    if (codeListeners.has(id)) continue;
+    codeListeners.set(id, onSnapshot(doc(db, "doorCodes", id), (snap) => {
+      if (snap.exists()) state.codes[id] = snap.data();
+      else delete state.codes[id];
+      refresh();
+    }, () => { /* net uitgeschreven: geen toegang meer, niets te melden */ }));
+  }
 }
 
 function startListeners() {
@@ -128,6 +172,7 @@ function startListeners() {
     state.members = m;
     if (m[uid()]?.blocked) { lockOut(); return; }
     if (m[uid()]) state.member = m[uid()];
+    syncCodeListeners();
     refresh();
   }, onListenError));
 
@@ -144,6 +189,7 @@ function startListeners() {
   const q = query(collection(db, "bookings"), where("date", ">=", ymd(new Date())), orderBy("date"));
   listeners.push(onSnapshot(q, (snap) => {
     state.bookings = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    syncCodeListeners();
     refresh();
   }, onListenError));
 }
@@ -274,8 +320,9 @@ async function mutateBooking(b, fn) {
     }
     const slots = data.slots.map((s) => ({ ...s, players: [...(s.players || [])] }));
     const extra = fn(slots, data) || {};
-    if (snap.exists()) tx.update(ref, { slots, ...extra, updatedAt: serverTimestamp() });
-    else tx.set(ref, { ...data, slots, ...extra, updatedAt: serverTimestamp() });
+    const accessUids = accessUidsOf(slots);
+    if (snap.exists()) tx.update(ref, { slots, accessUids, ...extra, updatedAt: serverTimestamp() });
+    else tx.set(ref, { ...data, slots, accessUids, ...extra, updatedAt: serverTimestamp() });
   });
 }
 
@@ -364,7 +411,7 @@ function render() {
 function refresh() {
   if (!state.member) return;
   renderTop();
-  if (state.view === "agenda") renderMain();
+  if (state.view === "agenda" || state.view === "codes") renderMain();
   else if (state.view === "members") {
     const el = document.getElementById("member-list");
     if (el) el.innerHTML = memberListHtml();
@@ -386,7 +433,8 @@ function logoHtml(cls) {
 
 function renderTop() {
   const nav = state.member
-    ? [["agenda", "navAgenda"], ["members", "navMembers"], ["profile", "navProfile"], ...(isAdmin() ? [["admin", "navAdmin"]] : [])]
+    ? [["agenda", "navAgenda"], ["members", "navMembers"], ["profile", "navProfile"],
+       ...(isManager() ? [["codes", "navCodes"]] : []), ...(isAdmin() ? [["admin", "navAdmin"]] : [])]
     : [];
   $top.innerHTML = `
     <div class="wrap topbar-inner">
@@ -445,7 +493,8 @@ function renderMain() {
     return;
   }
   if (state.view === "admin" && !isAdmin()) state.view = "agenda";
-  const views = { agenda: renderAgenda, members: renderMembers, profile: renderProfile, admin: renderAdmin };
+  if (state.view === "codes" && !isManager()) state.view = "agenda";
+  const views = { agenda: renderAgenda, members: renderMembers, profile: renderProfile, admin: renderAdmin, codes: renderCodes };
   $main.innerHTML = views[state.view]();
   if (state.view === "admin") loadInviteCode();
 }
@@ -572,10 +621,77 @@ function renderBooking(b) {
         </div>
         ${actions.length ? `<div class="booking-actions">${actions.join("")}</div>` : ""}
       </header>
+      ${b.cancelled ? "" : doorRow(b)}
       ${b.cancelled
         ? `<p class="cancel-note">${esc(t("cancelledSession"))}</p>`
         : `<div class="slots slots--${b.slots.length}">${b.slots.map((s, i) => renderCourt(b, s, i)).join("")}</div>`}
     </article>`;
+}
+
+function sessionTitle(b) {
+  if (b.type === "community") { const rec = recurringFor(b); return rec ? recurringName(rec) : b.name || t("community"); }
+  const owner = state.members[b.createdBy];
+  return b.title || t("memberBooking", { name: owner ? fullName(owner) : "?" });
+}
+
+const playerCount = (b) => (b.slots || []).reduce((n, s) => n + (s.players?.length || 0), 0);
+const involvedIn = (b) => (b.slots || []).some((s) => s.players?.some((p) => p.uid === uid() || (!p.uid && p.addedBy === uid())));
+
+function doorRow(b) {
+  const code = state.codes[b.id]?.code;
+  if (isManager()) {
+    return `
+      <div class="door${code ? "" : " door--empty"}">
+        ${code
+          ? `<span class="door-label">${esc(t("doorCode"))}</span><strong class="door-code">${esc(code)}</strong>`
+          : `<span class="door-label">${esc(t("doorNone"))}</span>`}
+        <button type="button" class="btn btn-ghost btn-small" data-action="edit-code" data-booking="${esc(b.id)}">${esc(code ? t("doorEdit") : t("doorAdd"))}</button>
+      </div>`;
+  }
+  if (!involvedIn(b)) return "";
+  return code
+    ? `<div class="door"><span class="door-label">${esc(t("doorCode"))}</span><strong class="door-code">${esc(code)}</strong></div>`
+    : `<div class="door door--empty"><span class="door-label">${esc(t("doorPending"))}</span></div>`;
+}
+
+function renderCodes() {
+  const items = agendaItems().filter((b) => !b.cancelled);
+  const rows = items.map((b) => {
+    const code = state.codes[b.id]?.code;
+    const n = playerCount(b);
+    return `
+      <li class="${!code && n ? "needs-code" : ""}">
+        <span class="who">
+          <span class="who-name">${esc(dateLabel(b.date))}, ${b.start}–${fromMin(toMin(b.start) + Number(b.duration))}</span>
+          <span class="who-meta">${esc(sessionTitle(b))}, ${esc(t("codesPlayers", { n }))}</span>
+        </span>
+        ${code ? `<strong class="door-code">${esc(code)}</strong>` : `<span class="badge${n ? " badge--off" : " badge--muted"}">${esc(t("doorNone"))}</span>`}
+        <span class="row-actions">
+          <button type="button" class="btn btn-ghost btn-small" data-action="edit-code" data-booking="${esc(b.id)}">${esc(code ? t("doorEdit") : t("doorAdd"))}</button>
+        </span>
+      </li>`;
+  }).join("");
+  return `
+    <section class="narrow narrow--wide">
+      <h1>${esc(t("codesTitle"))}</h1>
+      <p class="lead">${esc(t("codesIntro"))}</p>
+      ${items.length ? `<ul class="member-list member-list--admin codes-list">${rows}</ul>` : `<p class="empty">${esc(t("codesEmpty"))}</p>`}
+    </section>`;
+}
+
+function openDoorCode(b) {
+  const code = state.codes[b.id]?.code || "";
+  openModal(`
+    <h2>${esc(t("doorTitle"))}</h2>
+    <p class="muted">${esc(sessionTitle(b))}, ${esc(dateLabel(b.date))}, ${b.start}–${fromMin(toMin(b.start) + Number(b.duration))}</p>
+    <form data-form="door-code" class="stack">
+      <label>${esc(t("doorCode"))}<input name="code" maxlength="30" autocomplete="off" value="${esc(code)}"></label>
+      <span class="help">${esc(t("doorHelp"))}</span>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-modal">${esc(t("cancel"))}</button>
+        <button class="btn btn-primary">${esc(t("doorSave"))}</button>
+      </div>
+    </form>`, { bookingId: b.id });
 }
 
 function renderCourt(b, slot, si) {
@@ -777,13 +893,15 @@ function adminMembersHtml() {
     <li class="${m.blocked ? "is-blocked" : ""}">
       <span class="avatar">${esc(initials(fullName(m)))}</span>
       <span class="who">
-        <span class="who-name">${esc(fullName(m))}${m.role === "admin" ? ` <span class="badge">${esc(t("adminBadge"))}</span>` : ""}${m.blocked ? ` <span class="badge badge--off">${esc(t("blockedBadge"))}</span>` : ""}</span>
+        <span class="who-name">${esc(fullName(m))}${m.role === "admin" ? ` <span class="badge">${esc(t("adminBadge"))}</span>` : ""}${m.role === "manager" ? ` <span class="badge badge--ball">${esc(t("managerBadge"))}</span>` : ""}${m.blocked ? ` <span class="badge badge--off">${esc(t("blockedBadge"))}</span>` : ""}</span>
         <span class="who-meta">${m.level ? `<span class="lvl">${esc(levelLabel(m.level))}</span>` : ""}${esc(m.company || "")}</span>
       </span>
       <span class="row-actions">
         <button type="button" class="btn btn-ghost btn-small" data-action="edit-member" data-member="${esc(m.id)}">${esc(t("editBooking"))}</button>
         ${self ? "" : `
-        <button type="button" class="btn btn-ghost btn-small" data-action="toggle-admin" data-member="${esc(m.id)}">${esc(m.role === "admin" ? t("removeAdmin") : t("makeAdmin"))}</button>
+        <select class="role-select" data-member="${esc(m.id)}" aria-label="${esc(t("roleLabel"))}">
+          ${["member", "manager", "admin"].map((r) => `<option value="${r}"${(m.role || "member") === r ? " selected" : ""}>${esc(t("role_" + r))}</option>`).join("")}
+        </select>
         <button type="button" class="btn btn-ghost btn-small${m.blocked ? "" : " btn-danger"}" data-action="toggle-block" data-member="${esc(m.id)}">${esc(m.blocked ? t("unblock") : t("block"))}</button>`}
       </span>
     </li>`;
@@ -972,6 +1090,12 @@ document.addEventListener("click", async (e) => {
       openNewBooking();
       break;
 
+    case "edit-code": {
+      const b = findBooking(el.dataset.booking);
+      if (b && isManager()) openDoorCode(b);
+      break;
+    }
+
     case "use-company": {
       const input = el.closest("form")?.elements.namedItem("title");
       if (input) { input.value = state.member?.company || ""; input.focus(); }
@@ -1055,8 +1179,11 @@ document.addEventListener("click", async (e) => {
     case "cleanup-scan": {
       const box = document.getElementById("cleanup");
       try {
-        const snap = await getDocs(query(collection(db, "bookings"), where("date", "<", ymd(new Date()))));
+        const today = ymd(new Date());
+        const snap = await getDocs(query(collection(db, "bookings"), where("date", "<", today)));
+        const codeSnap = await getDocs(query(collection(db, "doorCodes"), where("date", "<", today)));
         state.oldBookings = snap.docs.map((d) => d.id);
+        state.oldCodes = codeSnap.docs.map((d) => d.id);
         box.innerHTML = state.oldBookings.length
           ? `<p>${esc(t("cleanupFound", { n: state.oldBookings.length }))}</p>
              <div><button type="button" class="btn btn-danger-solid" data-action="cleanup-run">${esc(t("cleanupRun", { n: state.oldBookings.length }))}</button></div>`
@@ -1073,6 +1200,12 @@ document.addEventListener("click", async (e) => {
         for (let i = 0; i < ids.length; i += 400) {
           const batch = writeBatch(db);
           ids.slice(i, i + 400).forEach((id) => batch.delete(doc(db, "bookings", id)));
+          await batch.commit();
+        }
+        const codes = state.oldCodes || [];
+        for (let i = 0; i < codes.length; i += 400) {
+          const batch = writeBatch(db);
+          codes.slice(i, i + 400).forEach((id) => batch.delete(doc(db, "doorCodes", id)));
           await batch.commit();
         }
         document.getElementById("cleanup").innerHTML = `<p>${esc(t("cleanupDone", { n: ids.length }))}</p>`;
@@ -1111,6 +1244,7 @@ document.addEventListener("click", async (e) => {
       if (!confirm(t("deleteConfirm"))) return;
       try {
         await deleteDoc(doc(db, "bookings", el.dataset.booking));
+        if (isManager()) await deleteDoc(doc(db, "doorCodes", el.dataset.booking)).catch(() => {});
         toast(t("bookingDeleted"));
       } catch (err) {
         toast(errMsg(err), true);
@@ -1203,6 +1337,23 @@ document.addEventListener("submit", async (e) => {
         break;
       }
 
+      case "door-code": {
+        const b = findBooking(state.modalCtx?.bookingId);
+        if (!b) throw new Error("gone");
+        const code = E.namedItem("code").value.trim();
+        // Sessie aanmaken indien nodig en de lijst met wie de code mag zien bijwerken
+        await mutateBooking(b, () => ({}));
+        if (code) {
+          await setDoc(doc(db, "doorCodes", b.id), { code, date: b.date, updatedBy: uid(), updatedAt: serverTimestamp() });
+          toast(t("doorSaved"));
+        } else {
+          await deleteDoc(doc(db, "doorCodes", b.id));
+          toast(t("doorRemoved"));
+        }
+        closeModal();
+        break;
+      }
+
       case "invite": {
         const code = E.namedItem("code").value.trim();
         if (!confirm(t("inviteConfirm", { code }))) break;
@@ -1224,6 +1375,7 @@ document.addEventListener("submit", async (e) => {
         await addDoc(collection(db, "bookings"), {
           type: "member", date, start, duration, split, slots,
           title: E.namedItem("title").value.trim(),
+          accessUids: accessUidsOf(slots),
           note: E.namedItem("note").value.trim(),
           cancelled: false,
           createdBy: uid(),
@@ -1308,7 +1460,25 @@ document.addEventListener("input", (e) => {
   }
 });
 
-document.addEventListener("change", (e) => {
+document.addEventListener("change", async (e) => {
+  if (e.target.classList?.contains("role-select")) {
+    const sel = e.target;
+    const m = state.members[sel.dataset.member];
+    if (!m || m.id === uid()) return;
+    const role = sel.value;
+    if (!confirm(t("roleConfirm", { name: fullName(m), role: t("role_" + role) }))) {
+      sel.value = m.role || "member";
+      return;
+    }
+    try {
+      await updateDoc(doc(db, "members", m.id), { role: role === "member" ? deleteField() : role });
+      toast(t("roleSaved"));
+    } catch (err) {
+      sel.value = m.role || "member";
+      toast(errMsg(err), true);
+    }
+    return;
+  }
   if (e.target.closest("form[data-booking-form]") && ["duration", "split", "start"].includes(e.target.name)) {
     updateSlotOptions();
   }
