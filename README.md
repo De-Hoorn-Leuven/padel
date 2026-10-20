@@ -24,7 +24,9 @@ Wie mag wat:
 | Vaste velden toevoegen, bewerken, (de)activeren | admins |
 | Uitnodigingscode wijzigen | admins |
 | Leden bewerken, rol kiezen (lid, manager padelhal, admin), toegang intrekken | admins |
-| Deurcode per sessie toevoegen of wijzigen | manager padelhal, admins |
+| Lid verwijderen (na intrekken van de toegang) | admins |
+| Veld (cijfer/letter) en deurcode per sessie instellen | manager padelhal, admins |
+| Veld van een sessie zien | iedereen |
 | Deurcode van een sessie zien | spelers van die sessie, wie er een gast toevoegde, manager, admins |
 | Oude velden in één keer verwijderen | admins |
 
@@ -61,10 +63,10 @@ Let op: op het gratis GitHub-plan werkt Pages alleen voor **publieke** repo’s.
 ```
 config/settings   { name, weekday (0=zo … 2=di), start "12:00", duration 60|90, split bool, location, active, startDate, endDate, onePerMember }  ← het oorspronkelijke vaste veld
 config/invite     { code }                                   ← enkel admins
-recurring/{id}    { name, weekday, start, duration, split, location, active, startDate, endDate, onePerMember }  ← extra vaste velden
+recurring/{id}    { name, weekday, start, duration, split, location, active, startDate, endDate, onePerMember, court? }  ← extra vaste velden
 members/{uid}     { firstName, lastName, company, level, inviteCode, role? (admin|manager), blocked? }
 doorCodes/{sessie-id} { code, date, updatedBy }               ← enkel leesbaar voor spelers van die sessie
-bookings/{id}     { type: "community"|"member", date "YYYY-MM-DD", start, duration, split, title?, recurringId?, accessUids,
+bookings/{id}     { type: "community"|"member", date "YYYY-MM-DD", start, duration, split, title?, recurringId?, accessUids, court?,
                     note|location, cancelled, createdBy,
                     slots: [ { start, end, open, players: [ { uid|null, name, addedBy } ] } ] }
 ```
@@ -72,6 +74,8 @@ bookings/{id}     { type: "community"|"member", date "YYYY-MM-DD", start, durati
 Members-veldsessies krijgen het id `community_YYYY-MM-DD` en worden pas als document aangemaakt bij de eerste inschrijving. Daardoor gelden gewijzigde instellingen automatisch voor alle sessies waar nog niemand in staat, terwijl sessies met inschrijvingen hun uren behouden.
 
 ## Bekende beperkingen
+
+- Een lid verwijderen wist het profiel, niet het login-account. Dat kan enkel in de Firebase-console (Authentication → Users). Zonder dat kan de persoon zich met de uitnodigingscode opnieuw registreren.
 
 - Deurcodes staan afgeschermd in `doorCodes`: de Firestore rules geven enkel leestoegang aan wie in de lijst `accessUids` van die sessie staat. De app houdt die lijst gelijk met de spelers. Een lid met technische kennis zou die lijst rechtstreeks kunnen aanpassen; voor een groep die elkaar kent is dat aanvaardbaar, maar kies geen code die ook elders toegang geeft.
 

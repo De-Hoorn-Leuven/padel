@@ -227,7 +227,31 @@ input:focus, select:focus { border-color: var(--court); outline: none; box-shado
   background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-m);
   padding: 1.1rem; display: grid; gap: 1rem;
 }
-.booking-head { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.booking-head { display: flex; align-items: flex-start; gap: 0.9rem 1rem; flex-wrap: wrap; }
+.booking-head-text { flex: 1 1 220px; min-width: 0; }
+
+/* Veldbordje: blauw met witte lijn, zoals de bordjes in de padelhal */
+.court-sign {
+  position: relative; flex: none;
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+  width: 58px; height: 66px; border-radius: 9px;
+  background: var(--court); color: #fff;
+  box-shadow: inset 0 0 0 4px var(--court), inset 0 0 0 6px rgba(255, 255, 255, 0.9), 0 2px 0 var(--court-deep);
+}
+.court-sign::after {
+  content: ""; position: absolute; top: -5px; right: -5px; width: 15px; height: 15px; border-radius: 50%;
+  background: var(--ball); box-shadow: inset 2px -2px 0 rgba(0, 0, 0, 0.15), 0 0 0 2px var(--surface);
+}
+.court-sign-cap { font-size: 0.58rem; font-weight: 700; letter-spacing: 0.2em; margin-left: 0.2em; opacity: 0.85; }
+.court-sign-letter { font-family: var(--font-display); font-weight: 700; font-size: 2.2rem; line-height: 0.95; }
+.court-sign--small { width: 42px; height: 48px; border-radius: 7px; }
+.court-sign--small .court-sign-cap { font-size: 0.45rem; }
+.court-sign--small .court-sign-letter { font-size: 1.5rem; }
+.court-sign--small::after { width: 11px; height: 11px; top: -4px; right: -4px; }
+.court-sign--empty { background: var(--paper); color: var(--muted); box-shadow: inset 0 0 0 2px var(--rule); }
+.court-sign--empty::after { display: none; }
+.court-field-row { display: grid; grid-template-columns: 90px 1fr; gap: 0.75rem; align-items: end; }
+.court-input { text-align: center; font-family: var(--font-display); font-size: 1.6rem !important; font-weight: 700; text-transform: uppercase; }
 .booking-sub { color: var(--muted); }
 .byline { font-size: 0.9rem; color: var(--muted); font-style: italic; }
 .recurring-lines { list-style: none; margin: 0 0 0.35rem; padding: 0; font-weight: 600; }
@@ -265,8 +289,6 @@ input:focus, select:focus { border-color: var(--court); outline: none; box-shado
 }
 .codes-list .door-code { font-size: 1.25rem; }
 .codes-list li.needs-code { box-shadow: inset 4px 0 0 var(--danger); }
-.badge--ball { background: var(--ball); color: var(--ball-ink); }
-.badge--muted { background: var(--rule); color: var(--muted); }
 .role-select { width: auto; min-height: 34px; padding: 0.2rem 0.5rem; font-size: 0.9rem; }
 
 /* ---------- the court ---------- */
@@ -364,6 +386,8 @@ button.spot--empty:hover { background: rgba(255, 255, 255, 0.16); border-style: 
   padding: 0.05rem 0.45rem; border-radius: 999px; background: var(--court); color: #fff;
 }
 .badge--off { background: var(--danger); }
+.badge--ball { background: var(--ball); color: var(--ball-ink); }
+.badge--muted { background: var(--rule); color: var(--muted); }
 .row-actions { margin-left: auto; display: flex; flex: none; justify-content: flex-end; gap: 0.15rem; }
 .member-list--admin li.is-blocked .avatar, .member-list--admin li.is-blocked .who { opacity: 0.55; }
 .btn-danger { color: var(--danger); }

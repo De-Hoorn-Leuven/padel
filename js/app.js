@@ -614,7 +614,8 @@ function renderBooking(b) {
   return `
     <article class="booking booking--${b.type}${b.cancelled ? " is-cancelled" : ""}">
       <header class="booking-head">
-        <div>
+        ${b.cancelled ? "" : courtBadge(courtOf(b))}
+        <div class="booking-head-text">
           <p class="tag">${esc(b.type === "community" ? t("tagCommunity") : t("tagMember"))}</p>
           <h3>${esc(title)}</h3>
           ${byline ? `<p class="byline">${esc(byline)}</p>` : ""}
@@ -635,6 +636,19 @@ function sessionTitle(b) {
   return b.title || t("memberBooking", { name: owner ? fullName(owner) : "?" });
 }
 
+// Veldnummer of -letter: ingesteld per sessie, anders de standaard van het vaste veld.
+function courtOf(b) {
+  if (b.court) return b.court;
+  if (b.type === "community") return recurringFor(b)?.court || "";
+  return "";
+}
+const cleanCourt = (v) => (v || "").trim().slice(0, 1).toUpperCase();
+
+function courtBadge(court, size = "") {
+  if (!court) return "";
+  return `<span class="court-sign${size ? ` court-sign--${size}` : ""}" role="img" aria-label="${esc(t("courtAria", { court }))}"><span class="court-sign-cap" aria-hidden="true">${esc(t("courtCap"))}</span><span class="court-sign-letter" aria-hidden="true">${esc(court)}</span></span>`;
+}
+
 const playerCount = (b) => (b.slots || []).reduce((n, s) => n + (s.players?.length || 0), 0);
 const involvedIn = (b) => (b.slots || []).some((s) => s.players?.some((p) => p.uid === uid() || (!p.uid && p.addedBy === uid())));
 
@@ -646,7 +660,7 @@ function doorRow(b) {
         ${code
           ? `<span class="door-label">${esc(t("doorCode"))}</span><strong class="door-code">${esc(code)}</strong>`
           : `<span class="door-label">${esc(t("doorNone"))}</span>`}
-        <button type="button" class="btn btn-ghost btn-small" data-action="edit-code" data-booking="${esc(b.id)}">${esc(code ? t("doorEdit") : t("doorAdd"))}</button>
+        <button type="button" class="btn btn-ghost btn-small" data-action="edit-code" data-booking="${esc(b.id)}">${esc(t("courtCodeEdit"))}</button>
       </div>`;
   }
   if (!involvedIn(b)) return "";
@@ -662,13 +676,14 @@ function renderCodes() {
     const n = playerCount(b);
     return `
       <li class="${!code && n ? "needs-code" : ""}">
+        ${courtBadge(courtOf(b), "small") || `<span class="court-sign court-sign--small court-sign--empty" aria-hidden="true"><span class="court-sign-cap">${esc(t("courtCap"))}</span><span class="court-sign-letter">?</span></span>`}
         <span class="who">
           <span class="who-name">${esc(dateLabel(b.date))}, ${b.start}–${fromMin(toMin(b.start) + Number(b.duration))}</span>
           <span class="who-meta">${esc(sessionTitle(b))}, ${esc(t("codesPlayers", { n }))}</span>
         </span>
         ${code ? `<strong class="door-code">${esc(code)}</strong>` : `<span class="badge${n ? " badge--off" : " badge--muted"}">${esc(t("doorNone"))}</span>`}
         <span class="row-actions">
-          <button type="button" class="btn btn-ghost btn-small" data-action="edit-code" data-booking="${esc(b.id)}">${esc(code ? t("doorEdit") : t("doorAdd"))}</button>
+          <button type="button" class="btn btn-ghost btn-small" data-action="edit-code" data-booking="${esc(b.id)}">${esc(t("courtCodeEdit"))}</button>
         </span>
       </li>`;
   }).join("");
@@ -682,10 +697,17 @@ function renderCodes() {
 
 function openDoorCode(b) {
   const code = state.codes[b.id]?.code || "";
+  const fallback = b.type === "community" ? recurringFor(b)?.court || "" : "";
   openModal(`
-    <h2>${esc(t("doorTitle"))}</h2>
+    <h2>${esc(t("courtCodeTitle"))}</h2>
     <p class="muted">${esc(sessionTitle(b))}, ${esc(dateLabel(b.date))}, ${b.start}–${fromMin(toMin(b.start) + Number(b.duration))}</p>
     <form data-form="door-code" class="stack">
+      <div class="court-field-row">
+        <label>${esc(t("courtLabel"))}
+          <input name="court" class="court-input" maxlength="1" autocomplete="off" pattern="[A-Za-z0-9]" value="${esc(b.court || "")}" placeholder="${esc(fallback || "–")}">
+        </label>
+        <span class="help">${esc(fallback ? t("courtHelpDefault", { court: fallback }) : t("courtHelp"))}</span>
+      </div>
       <label>${esc(t("doorCode"))}<input name="code" maxlength="30" autocomplete="off" value="${esc(code)}"></label>
       <span class="help">${esc(t("doorHelp"))}</span>
       <div class="modal-actions">
@@ -829,7 +851,7 @@ function adminRecurringHtml() {
     <li class="${r.active === false || (r.endDate && r.endDate < ymd(new Date())) ? "is-blocked" : ""}">
       <span class="who">
         <span class="who-name">${esc(recurringName(r))}${r.active === false ? ` <span class="badge badge--off">${esc(t("inactiveBadge"))}</span>` : ""}${r.endDate && r.endDate < ymd(new Date()) ? ` <span class="badge badge--off">${esc(t("expiredBadge"))}</span>` : ""}</span>
-        <span class="who-meta">${esc(t("recurringWhen", { day: weekdayName(r.weekday), start: r.start, end: fromMin(toMin(r.start) + r.duration) }))}${r.split && r.duration === 90 ? ", 2 × 45 min" : ""}${r.location ? `, ${esc(r.location)}` : ""}${periodText(r) ? `, ${esc(periodText(r))}` : ""}${r.onePerMember !== false ? `, ${esc(t("onePerMemberShort"))}` : ""}</span>
+        <span class="who-meta">${esc(t("recurringWhen", { day: weekdayName(r.weekday), start: r.start, end: fromMin(toMin(r.start) + r.duration) }))}${r.split && r.duration === 90 ? ", 2 × 45 min" : ""}${r.location ? `, ${esc(r.location)}` : ""}${r.court ? `, ${esc(t("courtShort", { court: r.court }))}` : ""}${periodText(r) ? `, ${esc(periodText(r))}` : ""}${r.onePerMember !== false ? `, ${esc(t("onePerMemberShort"))}` : ""}</span>
       </span>
       <span class="row-actions">
         <button type="button" class="btn btn-ghost btn-small" data-action="edit-recurring" data-rec="${esc(r.id)}">${esc(t("editBooking"))}</button>
@@ -854,7 +876,11 @@ function openRecurring(r) {
       </div>
       ${durationField(Number(v.duration))}
       <label class="check"><input type="checkbox" name="split"${v.split ? " checked" : ""}> ${esc(t("splitLabel"))}</label>
-      <label>${esc(t("location"))}<input name="location" maxlength="80" value="${esc(v.location || "")}"></label>
+      <div class="row">
+        <label>${esc(t("location"))}<input name="location" maxlength="80" value="${esc(v.location || "")}"></label>
+        <label>${esc(t("courtDefault"))}<input name="court" class="court-input" maxlength="1" autocomplete="off" value="${esc(v.court || "")}" placeholder="–"></label>
+      </div>
+      <span class="help">${esc(t("courtDefaultHelp"))}</span>
       <fieldset class="stack-tight">
         <legend>${esc(t("periodLegend"))}</legend>
         <div class="row">
@@ -903,7 +929,8 @@ function adminMembersHtml() {
         <select class="role-select" data-member="${esc(m.id)}" aria-label="${esc(t("roleLabel"))}">
           ${["member", "manager", "admin"].map((r) => `<option value="${r}"${(m.role || "member") === r ? " selected" : ""}>${esc(t("role_" + r))}</option>`).join("")}
         </select>
-        <button type="button" class="btn btn-ghost btn-small${m.blocked ? "" : " btn-danger"}" data-action="toggle-block" data-member="${esc(m.id)}">${esc(m.blocked ? t("unblock") : t("block"))}</button>`}
+        <button type="button" class="btn btn-ghost btn-small${m.blocked ? "" : " btn-danger"}" data-action="toggle-block" data-member="${esc(m.id)}">${esc(m.blocked ? t("unblock") : t("block"))}</button>
+        ${m.blocked ? `<button type="button" class="btn btn-ghost btn-small btn-danger" data-action="delete-member" data-member="${esc(m.id)}">${esc(t("delete"))}</button>` : ""}`}
       </span>
     </li>`;
   }).join("")}</ul>`;
@@ -1177,6 +1204,29 @@ document.addEventListener("click", async (e) => {
       break;
     }
 
+    case "delete-member": {
+      const m = state.members[el.dataset.member];
+      if (!m || m.id === uid() || !m.blocked) return;
+      const today = ymd(new Date());
+      const own = state.bookings.filter((b) => b.type === "member" && b.createdBy === m.id && b.date >= today);
+      if (!confirm(t("deleteMemberConfirm", { name: fullName(m), n: own.length }))) return;
+      try {
+        // Eigen komende velden van dit lid verwijderen (samen met hun deurcode)
+        for (const b of own) {
+          await deleteDoc(doc(db, "bookings", b.id));
+          await deleteDoc(doc(db, "doorCodes", b.id)).catch(() => {});
+        }
+        // Uit andere komende inschrijvingen halen (bij intrekken gebeurde dat al, dit vangt nieuwe gevallen op)
+        for (const b of state.bookings) {
+          if (b.createdBy === m.id || !b.slots?.some((s) => s.players?.some((p) => p.uid === m.id))) continue;
+          await mutateBooking(b, (slots) => { slots.forEach((s) => { s.players = s.players.filter((p) => p.uid !== m.id); }); });
+        }
+        await deleteDoc(doc(db, "members", m.id));
+        toast(t("memberDeleted", { name: fullName(m) }));
+      } catch (err) { toast(errMsg(err), true); }
+      break;
+    }
+
     case "cleanup-scan": {
       const box = document.getElementById("cleanup");
       try {
@@ -1323,6 +1373,7 @@ document.addEventListener("submit", async (e) => {
           duration,
           split: duration === 90 && E.namedItem("split").checked,
           location: E.namedItem("location").value.trim(),
+          court: cleanCourt(E.namedItem("court").value) || null,
           active: E.namedItem("active").checked,
           onePerMember: E.namedItem("onePerMember").checked,
           startDate: E.namedItem("startDate").value || null,
@@ -1342,15 +1393,15 @@ document.addEventListener("submit", async (e) => {
         const b = findBooking(state.modalCtx?.bookingId);
         if (!b) throw new Error("gone");
         const code = E.namedItem("code").value.trim();
-        // Sessie aanmaken indien nodig en de lijst met wie de code mag zien bijwerken
-        await mutateBooking(b, () => ({}));
+        const court = cleanCourt(E.namedItem("court").value);
+        // Sessie aanmaken indien nodig, veld bewaren en de lijst bijwerken van wie de code mag zien
+        await mutateBooking(b, () => ({ court: court || null }));
         if (code) {
           await setDoc(doc(db, "doorCodes", b.id), { code, date: b.date, updatedBy: uid(), updatedAt: serverTimestamp() });
-          toast(t("doorSaved"));
         } else {
           await deleteDoc(doc(db, "doorCodes", b.id));
-          toast(t("doorRemoved"));
         }
+        toast(t("courtCodeSaved"));
         closeModal();
         break;
       }
@@ -1455,6 +1506,9 @@ document.addEventListener("submit", async (e) => {
 });
 
 document.addEventListener("input", (e) => {
+  if (e.target.classList?.contains("court-input")) {
+    e.target.value = e.target.value.replace(/[^A-Za-z0-9]/g, "").slice(0, 1).toUpperCase();
+  }
   if (e.target.id === "member-search") {
     state.memberSearch = e.target.value;
     document.getElementById("member-list").innerHTML = memberListHtml();

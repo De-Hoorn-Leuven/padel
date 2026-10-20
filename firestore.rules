@@ -81,6 +81,8 @@ service cloud.firestore {
           || (resource.data.createdBy == request.auth.uid
               && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['type', 'createdBy']))
           || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['slots', 'accessUids', 'updatedAt'])
+          // Manager padelhal mag daarnaast het veldnummer instellen
+          || (isManager() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['slots', 'accessUids', 'court', 'updatedAt']))
         );
 
       allow delete: if isMember() && (
