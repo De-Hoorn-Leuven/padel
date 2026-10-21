@@ -43,7 +43,7 @@ De logobestanden staan in `img/`: de witte zeshoek voor de blauwe balk, het voll
 3. **Authentication → Sign-in method**
    - Zet **Google** aan.
    - Zet **E-mail/wachtwoord** aan. De optie *E-maillink* is niet nodig.
-4. **Authentication → Settings → Authorized domains**: voeg `de-hoorn.github.io` toe (of het domein waarop je publiceert).
+4. **Authentication → Settings → Authorized domains**: voeg `de-hoorn-leuven.github.io` toe (of het domein waarop je publiceert).
 5. **Firestore Database** aanmaken (bv. regio `europe-west1`), daarna bij **Rules** de inhoud van `firestore.rules` plakken en publiceren.
 6. Maak in Firestore het document `config/invite` met één veld: `code` (string), bv. `padel2026`. Dat is de code die nieuwe leden nodig hebben om zich te registreren. Wijzig hem gerust; bestaande leden blijven lid.
 7. Registreer jezelf in de app, ga in Firestore naar `members/<jouw uid>` en voeg het veld `role` = `admin` toe. Daarna verschijnt het tabblad **Instellingen**.
@@ -52,9 +52,9 @@ De logobestanden staan in `img/`: de witte zeshoek voor de blauwe balk, het voll
 
 ### 2. GitHub Pages
 
-1. Maak een repo in de organisatie, bv. `De-Hoorn/padel`, en push deze map naar `main`.
+1. Maak een repo in de organisatie, bv. `De-Hoorn-Leuven/padel`, en push deze map naar `main`.
 2. **Settings → Pages → Build and deployment**: *Deploy from a branch*, branch `main`, map `/ (root)`.
-3. De site staat na een minuutje op `https://de-hoorn.github.io/padel/`.
+3. De site staat na een minuutje op `https://de-hoorn-leuven.github.io/padel/`.
 
 Let op: op het gratis GitHub-plan werkt Pages alleen voor **publieke** repo’s. Dat is geen probleem voor deze app: er staan geen geheimen in de code.
 
