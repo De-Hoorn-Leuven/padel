@@ -55,11 +55,14 @@ service cloud.firestore {
 
     // Deurcode van de padelhal per sessie.
     // Lezen: manager/admin, of wie in die sessie speelt (of er een gast toevoegde).
+    // De maker van een eigen veld mag de code van dat veld ook lezen en instellen.
     match /doorCodes/{bookingId} {
+      function session() { return get(/databases/$(db)/documents/bookings/$(bookingId)).data; }
       allow read: if isManager()
-        || (isMember() && request.auth.uid in
-            get(/databases/$(db)/documents/bookings/$(bookingId)).data.get('accessUids', []));
-      allow write: if isManager();
+        || (isMember() && (request.auth.uid in session().get('accessUids', [])
+                           || session().get('createdBy', '') == request.auth.uid));
+      allow write: if isManager()
+        || (isMember() && session().get('type', '') == 'member' && session().get('createdBy', '') == request.auth.uid);
     }
 
     match /bookings/{bookingId} {

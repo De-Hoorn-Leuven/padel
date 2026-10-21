@@ -5,7 +5,7 @@ Statische webapp (HTML/CSS/JS, geen build-stap) voor GitHub Pages, met Firebase 
 ## Wat het doet
 
 - **Vast members-veld**: elke week op een vaste dag (start: dinsdag 12:00–13:30), opgedeeld in 2 slots van 45 minuten met elk 4 plaatsen. Wordt automatisch 8 weken vooruit getoond.
-- **Bijgeboekte velden**: leden die zelf een veld in de padelhal reserveren (60 of 90 min) zetten het hier. Bij 90 min kunnen ze het opdelen in 2 × 45 min en per slot kiezen of het open staat voor andere leden.
+- **Bijgeboekte velden**: leden die zelf (op eigen kosten) een veld in de padelhal reserveren (60 of 90 min) zetten het hier. Bij 90 min kunnen ze het opdelen in 2 × 45 min en kiezen welk deel ze delen. Een niet-gedeeld slot is privé: niemand kan het invullen, ook de maker niet. De maker kan zelf veld en deurcode van zijn veld invullen.
 - **Inschrijven**: leden zetten zichzelf in een slot, of een ander lid, of iemand zonder account (gast). Max. 4 per slot, bewaakt met een transactie zodat er nooit een 5e bij komt.
 - **Profiel**: voornaam, naam, bedrijf en niveau (Beginner, P25 t.e.m. P1000).
 - **NL/EN**: taalkeuze rechtsboven, wordt onthouden per browser.
@@ -16,7 +16,7 @@ Wie mag wat:
 | Actie | Wie |
 |---|---|
 | Zichzelf of anderen inschrijven in het members-veld | alle leden |
-| Inschrijven in een bijgeboekt slot | alle leden als het slot open staat; de eigenaar altijd |
+| Inschrijven in een bijgeboekt slot | alle leden, enkel in het gedeelde deel (ook de maker) |
 | Iemand uitschrijven | de speler zelf, wie hem toevoegde, de eigenaar van het veld, admins |
 | Veld verwijderen | eigenaar, admins |
 | Veld bewerken (datum, uur, opdeling, open slots) | eigenaar, admins |
@@ -25,7 +25,7 @@ Wie mag wat:
 | Uitnodigingscode wijzigen | admins |
 | Leden bewerken, rol kiezen (lid, manager padelhal, admin), toegang intrekken | admins |
 | Lid verwijderen (na intrekken van de toegang) | admins |
-| Veld (cijfer/letter) en deurcode per sessie instellen | manager padelhal, admins |
+| Veld (cijfer/letter) en deurcode per sessie instellen | manager padelhal, admins; bij een eigen veld ook de maker |
 | Veld van een sessie zien | iedereen |
 | Deurcode van een sessie zien | spelers van die sessie, wie er een gast toevoegde, manager, admins |
 | Oude velden in één keer verwijderen | admins |

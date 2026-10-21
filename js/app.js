@@ -55,6 +55,8 @@ const fromMin = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 const uid = () => state.user?.uid;
 const isAdmin = () => state.member?.role === "admin";
 const isManager = () => ["manager", "admin"].includes(state.member?.role);
+// Veld en deurcode: de manager voor elke sessie, de maker voor zijn eigen veld.
+const canEditCourtCode = (b) => isManager() || (b.type === "member" && b.createdBy === uid());
 
 // Wie de deurcode van een sessie mag zien: de spelers zelf, en wie een gast toevoegde.
 const accessUidsOf = (slots) =>
@@ -91,7 +93,7 @@ function toast(msg, isError = false) {
 
 function errMsg(e) {
   if (e?.i18n) return t(e.i18n, e.vars || {});
-  const map = { full: "errFull", already: "errAlready", closed: "errClosed", cancelled: "errCancelled", gone: "errGone", slotHasPlayers: "errSlotHasPlayers" };
+  const map = { closingHasPlayers: "errClosingHasPlayers", full: "errFull", already: "errAlready", closed: "errClosed", cancelled: "errCancelled", gone: "errGone", slotHasPlayers: "errSlotHasPlayers" };
   if (map[e?.message]) return t(map[e.message]);
   if (e?.code === "permission-denied") return t("errPermission");
   const authMap = {
@@ -150,7 +152,9 @@ function syncCodeListeners() {
     return;
   }
   if (managerCodesUnsub) { managerCodesUnsub(); managerCodesUnsub = null; state.codes = {}; }
-  const want = new Set(state.bookings.filter((b) => (b.accessUids || []).includes(uid())).map((b) => b.id));
+  const want = new Set(state.bookings
+    .filter((b) => (b.accessUids || []).includes(uid()) || (b.type === "member" && b.createdBy === uid()))
+    .map((b) => b.id));
   for (const [id, unsub] of codeListeners) {
     if (!want.has(id)) { unsub(); codeListeners.delete(id); delete state.codes[id]; }
   }
@@ -297,7 +301,8 @@ const findBooking = (id) => agendaItems().find((b) => b.id === id);
 
 function canAdd(b, slot) {
   if (!state.member || b.cancelled) return false;
-  return b.type === "community" || slot.open || b.createdBy === uid() || isAdmin();
+  // Bij een eigen veld is enkel het gedeelde deel invulbaar, ook voor de maker zelf.
+  return b.type === "community" || slot.open !== false;
 }
 function canRemove(b, p) {
   return p.uid === uid() || p.addedBy === uid() || b.createdBy === uid() || isAdmin();
@@ -334,7 +339,7 @@ async function addPlayer(b, si, player) {
       const slot = slots[si];
       if (!slot) throw new Error("gone");
       if (data.cancelled) throw new Error("cancelled");
-      if (data.type !== "community" && !slot.open && data.createdBy !== uid() && !isAdmin()) throw new Error("closed");
+      if (data.type !== "community" && slot.open === false) throw new Error("closed");
       if (slot.players.length >= CAPACITY) throw new Error("full");
       if (player.uid && slot.players.some((p) => p.uid === player.uid)) throw new Error("already");
       if (!player.uid && slot.players.some((p) => !p.uid && p.name.toLowerCase() === player.name.toLowerCase())) throw new Error("already");
@@ -654,7 +659,7 @@ const involvedIn = (b) => (b.slots || []).some((s) => s.players?.some((p) => p.u
 
 function doorRow(b) {
   const code = state.codes[b.id]?.code;
-  if (isManager()) {
+  if (canEditCourtCode(b)) {
     return `
       <div class="door${code ? "" : " door--empty"}">
         ${code
@@ -718,6 +723,22 @@ function openDoorCode(b) {
 }
 
 function renderCourt(b, slot, si) {
+  // Niet gedeeld: voor iedereen een leeg veld zonder inschrijfknoppen
+  if (b.type === "member" && slot.open === false) {
+    const locked = renderEmpty(b, si, false);
+    return `
+    <div class="court court--private">
+      <div class="court-meta">
+        <span class="court-time">${slot.start}–${slot.end}</span>
+        <span class="court-status is-closed">${esc(t("private"))}</span>
+      </div>
+      <div class="court-field" role="group" aria-label="${slot.start}–${slot.end}, ${esc(t("private"))}">
+        <div class="court-half">${locked}${locked}</div>
+        <div class="court-net" aria-hidden="true"></div>
+        <div class="court-half">${locked}${locked}</div>
+      </div>
+    </div>`;
+  }
   const players = slot.players || [];
   const n = players.length;
   const can = canAdd(b, slot) && n < CAPACITY;
@@ -972,6 +993,12 @@ function openNewBooking(b = null) {
         <span class="help">${esc(t("bookingTitleHelp"))}</span>
       </label>`}
       <label>${esc(community ? t("location") : t("note"))}<input name="note" maxlength="80" value="${esc(where || "")}"></label>
+      ${editing ? "" : `
+      <div class="row row--court">
+        <label>${esc(t("courtOptional"))}<input name="court" class="court-input" maxlength="1" autocomplete="off" placeholder="–"></label>
+        <label>${esc(t("codeOptional"))}<input name="code" maxlength="30" autocomplete="off"></label>
+      </div>
+      <span class="help">${esc(t("courtCodeOwnerHelp"))}</span>`}
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" data-action="close-modal">${esc(t("cancel"))}</button>
         <button class="btn btn-primary">${esc(editing ? t("saveChanges") : t("addBooking"))}</button>
@@ -993,30 +1020,31 @@ function updateSlotOptions() {
   f.querySelector("#split-label").title = dur !== 90 ? t("splitHelp") : "";
 
   const slots = buildSlots(E.namedItem("start").value || "18:00", dur, split.checked);
-  const prevOpen = [...f.querySelectorAll('input[name="open"]')].map((i) => i.checked);
-  const prevPlay = E.namedItem("play")?.value;
   const box = f.querySelector("#slot-options");
-  const openSet = ctx.community ? "" : `
-    <fieldset class="stack-tight">
-      <legend>${esc(t("openForMembers"))}</legend>
-      ${slots.map((s, i) => `<label class="check"><input type="checkbox" name="open" value="${i}"${(prevOpen[i] ?? ctx.initialOpen?.[i] ?? true) ? " checked" : ""}> ${s.start}–${s.end}</label>`).join("")}
-      <span class="help">${esc(t("openHelp"))}</span>
-    </fieldset>`;
-  if (ctx.editing) {
-    box.innerHTML = openSet;
+  if (ctx.community) { box.innerHTML = ""; return; }
+  if (slots.length === 1) {
+    box.innerHTML = `<p class="help">${esc(t("shareWhole"))}</p>`;
     return;
   }
-  box.innerHTML = `${openSet}
-    <label>${esc(t("iPlay"))}
-      <select name="play">
-        ${slots.length === 2
-          ? `<option value="all">${esc(t("iPlayBoth"))}</option>${slots.map((s, i) => `<option value="${i}">${esc(t("iPlaySlot", { time: `${s.start}–${s.end}` }))}</option>`).join("")}`
-          : `<option value="all">${esc(t("iPlayYes"))}</option>`}
-        <option value="none">${esc(t("iPlayNone"))}</option>
-      </select>
-    </label>`;
-  const sel = box.querySelector("select");
-  if (prevPlay && [...sel.options].some((o) => o.value === prevPlay)) sel.value = prevPlay;
+  // Opgedeeld: kies welk deel je deelt. Minstens één slot is altijd gedeeld.
+  const prev = f.querySelector('input[name="share"]:checked')?.value;
+  const io = ctx.initialOpen;
+  const init = !io || io.length < 2 || (io[0] && io[1]) ? "all" : io[0] ? "0" : "1";
+  const current = prev || init;
+  const opts = [["all", t("shareBoth")], ["0", t("shareSlot", { time: `${slots[0].start}–${slots[0].end}` })], ["1", t("shareSlot", { time: `${slots[1].start}–${slots[1].end}` })]];
+  box.innerHTML = `
+    <fieldset class="stack-tight">
+      <legend>${esc(t("shareLegend"))}</legend>
+      ${opts.map(([v, label]) => `<label class="check"><input type="radio" name="share" value="${v}"${current === v ? " checked" : ""}> ${esc(label)}</label>`).join("")}
+      <span class="help">${esc(t("shareHelp"))}</span>
+    </fieldset>`;
+}
+
+// Open-vlaggen per slot uit de keuze in het formulier
+function shareFlags(f, slotCount) {
+  if (slotCount === 1) return [true];
+  const v = f.querySelector('input[name="share"]:checked')?.value || "all";
+  return v === "all" ? [true, true] : v === "0" ? [true, false] : [false, true];
 }
 
 function openJoin(b, si) {
@@ -1120,7 +1148,7 @@ document.addEventListener("click", async (e) => {
 
     case "edit-code": {
       const b = findBooking(el.dataset.booking);
-      if (b && isManager()) openDoorCode(b);
+      if (b && canEditCourtCode(b)) openDoorCode(b);
       break;
     }
 
@@ -1294,8 +1322,8 @@ document.addEventListener("click", async (e) => {
     case "delete-booking": {
       if (!confirm(t("deleteConfirm"))) return;
       try {
+        await deleteDoc(doc(db, "doorCodes", el.dataset.booking)).catch(() => {});
         await deleteDoc(doc(db, "bookings", el.dataset.booking));
-        if (isManager()) await deleteDoc(doc(db, "doorCodes", el.dataset.booking)).catch(() => {});
         toast(t("bookingDeleted"));
       } catch (err) {
         toast(errMsg(err), true);
@@ -1419,21 +1447,20 @@ document.addEventListener("submit", async (e) => {
         const start = E.namedItem("start").value;
         const duration = Number(E.namedItem("duration").value);
         const split = duration === 90 && E.namedItem("split").checked;
-        const open = [...f.querySelectorAll('input[name="open"]')].map((i) => i.checked);
-        const slots = buildSlots(start, duration, split, open);
-        const play = E.namedItem("play").value;
-        const me = { uid: uid(), name: fullName(state.member), addedBy: uid() };
-        slots.forEach((s, i) => { if (play === "all" || play === String(i)) s.players.push(me); });
-        await addDoc(collection(db, "bookings"), {
+        const slots = buildSlots(start, duration, split, shareFlags(f, split ? 2 : 1));
+        const code = E.namedItem("code").value.trim();
+        const ref = await addDoc(collection(db, "bookings"), {
           type: "member", date, start, duration, split, slots,
           title: E.namedItem("title").value.trim(),
-          accessUids: accessUidsOf(slots),
+          court: cleanCourt(E.namedItem("court").value) || null,
+          accessUids: [],
           note: E.namedItem("note").value.trim(),
           cancelled: false,
           createdBy: uid(),
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
+        if (code) await setDoc(doc(db, "doorCodes", ref.id), { code, date, updatedBy: uid(), updatedAt: serverTimestamp() });
         closeModal();
         toast(t("bookingAdded"));
         break;
@@ -1447,14 +1474,13 @@ document.addEventListener("submit", async (e) => {
         const start = E.namedItem("start").value;
         const duration = Number(E.namedItem("duration").value);
         const split = duration === 90 && E.namedItem("split").checked;
-        const open = b.type === "community"
-          ? [true, true]
-          : [...f.querySelectorAll('input[name="open"]')].map((i) => i.checked);
+        const open = b.type === "community" ? [true, true] : shareFlags(f, split ? 2 : 1);
         const newSlots = buildSlots(start, duration, split, open);
         const note = E.namedItem("note").value.trim();
         await mutateBooking(b, (slots) => {
           const players = slots.map((s) => s.players);
           if (players.slice(newSlots.length).some((p) => p.length)) throw new Error("slotHasPlayers");
+          if (newSlots.some((s, i) => s.open === false && players[i]?.length)) throw new Error("closingHasPlayers");
           newSlots.forEach((s, i) => { s.players = players[i] || []; });
           slots.splice(0, slots.length, ...newSlots);
           return b.type === "community"

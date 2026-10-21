@@ -272,6 +272,11 @@ input:focus, select:focus { border-color: var(--court); outline: none; box-shado
 .slots { display: grid; gap: 1rem; }
 .slots--2 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); }
 
+/* ---------- private slot ---------- */
+
+.court--private .court-status { color: var(--muted); }
+.row--court { grid-template-columns: 140px 1fr; }
+
 /* ---------- door code ---------- */
 
 .door {
