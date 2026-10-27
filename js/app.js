@@ -231,6 +231,14 @@ function recurringDates(r) {
   return out;
 }
 
+// Een sessie is voorbij zodra het einduur gepasseerd is (niet pas om middernacht).
+function sessionEnd(b) {
+  const d = parseYmd(b.date);
+  d.setMinutes(toMin(b.start) + Number(b.duration || 0));
+  return d;
+}
+const isOver = (b) => sessionEnd(b) <= new Date();
+
 const inPeriod = (r, date) => (!r.startDate || date >= r.startDate) && (!r.endDate || date <= r.endDate);
 const recurringFor = (b) => recurringList().find((r) => r.id === (b.recurringId || "default"));
 const shortDate = (s) => new Intl.DateTimeFormat(locale(), { day: "numeric", month: "long" }).format(parseYmd(s));
@@ -254,7 +262,7 @@ function limitConflict(b, player) {
   const who = player.uid || uid();
   const today = ymd(new Date());
   return state.bookings.find((x) =>
-    x.type === "community" && x.id !== b.id && !x.cancelled && x.date >= today &&
+    x.type === "community" && x.id !== b.id && !x.cancelled && x.date >= today && !isOver(x) &&
     (x.recurringId || "default") === rec.id && inPeriod(rec, x.date) &&
     x.slots?.some((s) => s.players?.some((p) => p.uid === who || (!p.uid && p.addedBy === who)))) || null;
 }
@@ -293,7 +301,7 @@ function agendaItems() {
     items.set(b.id, b);
   }
   return [...items.values()]
-    .filter((b) => b.date >= today)
+    .filter((b) => b.date >= today && !isOver(b))
     .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start) || (a.type === "community" ? -1 : 1));
 }
 
@@ -1569,3 +1577,8 @@ document.addEventListener("change", async (e) => {
 
 setLang(getLang());
 render();
+
+// Blijft de pagina open staan, dan verdwijnt een sessie vanzelf zodra ze voorbij is.
+setInterval(() => {
+  if (state.member && !$modal.open && (state.view === "agenda" || state.view === "codes")) renderMain();
+}, 60 * 1000);
