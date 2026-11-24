@@ -255,25 +255,54 @@ function periodText(r) {
 
 // Max. één lopende inschrijving per lid op een vast veld. Een gast telt mee voor wie hem toevoegde.
 // Admins mogen altijd corrigeren.
-function limitConflict(b, player) {
+// Last-minute: vanaf X uur voor aanvang vervalt de limiet (standaard 48 u, 0 = uit).
+const sessionStart = (b) => { const d = parseYmd(b.date); d.setMinutes(toMin(b.start)); return d; };
+const lastMinuteHours = (rec) => (rec?.lastMinuteHours ?? 48);
+function inLastMinute(b) {
+  if (b.type !== "community") return false;
+  const h = Number(lastMinuteHours(recurringFor(b)));
+  if (!h) return false;
+  return sessionStart(b).getTime() - Date.now() <= h * 3600e3 && !isOver(b);
+}
+// Wie zich last-minute inschreef, wordt daar niet voor afgestraft: die inschrijving telt niet mee.
+function lastMinuteEntry(x, p) {
+  const h = Number(lastMinuteHours(recurringFor(x)));
+  return h > 0 && p.addedAt && p.addedAt >= sessionStart(x).getTime() - h * 3600e3;
+}
+
+// Max. één slot tegelijk per lid op een vast veld, ook binnen dezelfde sessie.
+// Een gast telt mee voor wie hem toevoegde. Admins mogen altijd corrigeren.
+function limitConflict(b, player, si) {
   if (b.type !== "community" || isAdmin()) return null;
   const rec = recurringFor(b);
   if (!rec || rec.onePerMember === false) return null;
+  if (inLastMinute(b)) return null;
   const who = player.uid || uid();
   const today = ymd(new Date());
-  return state.bookings.find((x) =>
-    x.type === "community" && x.id !== b.id && !x.cancelled && x.date >= today && !isOver(x) &&
-    (x.recurringId || "default") === rec.id && inPeriod(rec, x.date) &&
-    x.slots?.some((s) => s.players?.some((p) => p.uid === who || (!p.uid && p.addedBy === who)))) || null;
+  for (const x of state.bookings) {
+    if (x.type !== "community" || x.cancelled || x.date < today || isOver(x)) continue;
+    if ((x.recurringId || "default") !== rec.id || !inPeriod(rec, x.date)) continue;
+    for (let j = 0; j < (x.slots || []).length; j++) {
+      if (x.id === b.id && j === si) continue; // hetzelfde slot: geen tweede inschrijving
+      const hit = x.slots[j].players?.some((p) =>
+        (p.uid === who || (!p.uid && p.addedBy === who)) && !lastMinuteEntry(x, p));
+      if (hit) return { booking: x, slot: x.slots[j] };
+    }
+  }
+  return null;
 }
 
-function limitError(b, player) {
-  const other = limitConflict(b, player);
-  if (!other) return null;
+function limitError(b, player, si) {
+  const c = limitConflict(b, player, si);
+  if (!c) return null;
   const who = player.uid || uid();
   const err = new Error("limit");
   err.i18n = who === uid() ? "errLimitSelf" : "errLimitOther";
-  err.vars = { who: fullName(state.members[who]) || player.name, date: dateLabel(other.date), name: recurringName(recurringFor(b)) };
+  err.vars = {
+    who: fullName(state.members[who]) || player.name,
+    date: dateLabel(c.booking.date), time: `${c.slot.start}–${c.slot.end}`,
+    name: recurringName(recurringFor(b)), hours: lastMinuteHours(recurringFor(b))
+  };
   return err;
 }
 
@@ -341,7 +370,8 @@ async function mutateBooking(b, fn) {
 
 async function addPlayer(b, si, player) {
   try {
-    const limit = limitError(b, player);
+    const limit = limitError(b, player, si);
+    player = { ...player, addedAt: Date.now() };
     if (limit) throw limit;
     await mutateBooking(b, (slots, data) => {
       const slot = slots[si];
@@ -584,7 +614,7 @@ function renderAgenda() {
       <div>
         <h1>${esc(t("navAgenda"))}</h1>
         ${lines.length ? `<ul class="recurring-lines">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}
-        <p class="lead">${esc(t("agendaIntroLimit"))} ${esc(t("agendaIntroTail"))}</p>
+        <p class="lead">${esc(t("agendaIntroLimit", { hours: lastMinuteHours(activeRecurring()[0]) }))} ${esc(t("agendaIntroTail"))}</p>
         <p class="lead lead--share">${esc(t("agendaIntroShare"))}</p>
       </div>
       <div class="page-actions">
@@ -629,7 +659,9 @@ function renderBooking(b) {
       <header class="booking-head">
         ${b.cancelled ? "" : courtBadge(courtOf(b))}
         <div class="booking-head-text">
-          <p class="tag">${esc(b.type === "community" ? t("tagCommunity") : t("tagMember"))}</p>
+          <p class="tag">${esc(b.type === "community" ? t("tagCommunity") : t("tagMember"))}${
+            !b.cancelled && inLastMinute(b) && b.slots.some((s) => (s.players?.length || 0) < CAPACITY)
+              ? ` <span class="badge badge--ball">${esc(t("lastMinuteBadge"))}</span>` : ""}</p>
           <h3>${esc(title)}</h3>
           ${byline ? `<p class="byline">${esc(byline)}</p>` : ""}
           <p class="booking-sub">${b.start}–${end}${where ? `, ${esc(where)}` : ""}</p>
@@ -880,7 +912,7 @@ function adminRecurringHtml() {
     <li class="${r.active === false || (r.endDate && r.endDate < ymd(new Date())) ? "is-blocked" : ""}">
       <span class="who">
         <span class="who-name">${esc(recurringName(r))}${r.active === false ? ` <span class="badge badge--off">${esc(t("inactiveBadge"))}</span>` : ""}${r.endDate && r.endDate < ymd(new Date()) ? ` <span class="badge badge--off">${esc(t("expiredBadge"))}</span>` : ""}</span>
-        <span class="who-meta">${esc(t("recurringWhen", { day: weekdayName(r.weekday), start: r.start, end: fromMin(toMin(r.start) + r.duration) }))}${r.split && r.duration === 90 ? ", 2 × 45 min" : ""}${r.location ? `, ${esc(r.location)}` : ""}${r.court ? `, ${esc(t("courtShort", { court: r.court }))}` : ""}${periodText(r) ? `, ${esc(periodText(r))}` : ""}${r.onePerMember !== false ? `, ${esc(t("onePerMemberShort"))}` : ""}</span>
+        <span class="who-meta">${esc(t("recurringWhen", { day: weekdayName(r.weekday), start: r.start, end: fromMin(toMin(r.start) + r.duration) }))}${r.split && r.duration === 90 ? ", 2 × 45 min" : ""}${r.location ? `, ${esc(r.location)}` : ""}${r.court ? `, ${esc(t("courtShort", { court: r.court }))}` : ""}${periodText(r) ? `, ${esc(periodText(r))}` : ""}${r.onePerMember !== false ? `, ${esc(t("onePerMemberShort"))}` : ""}${r.onePerMember !== false && Number(lastMinuteHours(r)) ? `, ${esc(t("lastMinuteShort", { hours: lastMinuteHours(r) }))}` : ""}</span>
       </span>
       <span class="row-actions">
         <button type="button" class="btn btn-ghost btn-small" data-action="edit-recurring" data-rec="${esc(r.id)}">${esc(t("editBooking"))}</button>
@@ -920,6 +952,10 @@ function openRecurring(r) {
       </fieldset>
       <label class="check"><input type="checkbox" name="onePerMember"${v.onePerMember !== false ? " checked" : ""}> ${esc(t("onePerMember"))}</label>
       <span class="help">${esc(t("onePerMemberHelp"))}</span>
+      <label>${esc(t("lastMinuteLabel"))}
+        <input type="number" name="lastMinuteHours" min="0" max="168" step="1" value="${esc(String(v.lastMinuteHours ?? 48))}" style="max-width: 120px">
+        <span class="help">${esc(t("lastMinuteHelp"))}</span>
+      </label>
       <label class="check"><input type="checkbox" name="active"${v.active !== false ? " checked" : ""}> ${esc(t("recurringActive"))}</label>
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" data-action="close-modal">${esc(t("cancel"))}</button>
@@ -1059,7 +1095,7 @@ function openJoin(b, si) {
   const slot = b.slots[si];
   const inSlot = new Set((slot.players || []).filter((p) => p.uid).map((p) => p.uid));
   const others = activeMembers().filter((m) => !inSlot.has(m.id) && m.id !== uid()).sort(byName);
-  const selfErr = limitError(b, { uid: uid() });
+  const selfErr = limitError(b, { uid: uid() }, si);
   openModal(`
     <h2>${esc(t("addPlayer"))}</h2>
     <p class="muted">${esc(dateLabel(b.date))}, ${slot.start}–${slot.end}</p>
@@ -1072,7 +1108,7 @@ function openJoin(b, si) {
             <select name="member" required>
               <option value="">${esc(t("chooseMember"))}</option>
               ${others.map((m) => {
-                const busy = !!limitConflict(b, { uid: m.id });
+                const busy = !!limitConflict(b, { uid: m.id }, si);
                 return `<option value="${esc(m.id)}"${busy ? " disabled" : ""}>${esc(fullName(m))}${m.company ? `, ${esc(m.company)}` : ""}${m.level ? ` (${esc(levelLabel(m.level))})` : ""}${busy ? ` – ${esc(t("alreadyBooked"))}` : ""}</option>`;
               }).join("")}
             </select>
@@ -1412,6 +1448,7 @@ document.addEventListener("submit", async (e) => {
           court: cleanCourt(E.namedItem("court").value) || null,
           active: E.namedItem("active").checked,
           onePerMember: E.namedItem("onePerMember").checked,
+          lastMinuteHours: Math.max(0, Math.min(168, Number(E.namedItem("lastMinuteHours").value) || 0)),
           startDate: E.namedItem("startDate").value || null,
           endDate: E.namedItem("endDate").value || null,
           updatedAt: serverTimestamp()

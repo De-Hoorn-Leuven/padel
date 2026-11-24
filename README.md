@@ -63,7 +63,7 @@ Let op: op het gratis GitHub-plan werkt Pages alleen voor **publieke** repo’s.
 ```
 config/settings   { name, weekday (0=zo … 2=di), start "12:00", duration 60|90, split bool, location, active, startDate, endDate, onePerMember }  ← het oorspronkelijke vaste veld
 config/invite     { code }                                   ← enkel admins
-recurring/{id}    { name, weekday, start, duration, split, location, active, startDate, endDate, onePerMember, court? }  ← extra vaste velden
+recurring/{id}    { name, weekday, start, duration, split, location, active, startDate, endDate, onePerMember, lastMinuteHours, court? }  ← extra vaste velden
 members/{uid}     { firstName, lastName, company, level, inviteCode, role? (admin|manager), blocked? }
 doorCodes/{sessie-id} { code, date, updatedBy }               ← enkel leesbaar voor spelers van die sessie
 bookings/{id}     { type: "community"|"member", date "YYYY-MM-DD", start, duration, split, title?, recurringId?, accessUids, court?,
@@ -79,7 +79,7 @@ Members-veldsessies krijgen het id `community_YYYY-MM-DD` en worden pas als docu
 
 - Deurcodes staan afgeschermd in `doorCodes`: de Firestore rules geven enkel leestoegang aan wie in de lijst `accessUids` van die sessie staat. De app houdt die lijst gelijk met de spelers. Een lid met technische kennis zou die lijst rechtstreeks kunnen aanpassen; voor een groep die elkaar kent is dat aanvaardbaar, maar kies geen code die ook elders toegang geeft.
 
-- De regel "één lopende inschrijving per lid" wordt door de app afgedwongen, niet door de Firestore rules (die kunnen geen inschrijvingen tellen). Voor een groep die elkaar kent volstaat dat.
+- De regel "één slot tegelijk per lid" (die vanaf 48 uur voor aanvang vervalt) wordt door de app afgedwongen, niet door de Firestore rules (die kunnen geen inschrijvingen tellen). Voor een groep die elkaar kent volstaat dat.
 
 - Leden vertrouwen elkaar: de rules beperken gewone leden tot het wijzigen van spelerslijsten (max. 4 per slot), maar controleren niet per speler wie wie mag verwijderen. De app zelf doet dat wel.
 - De app boekt niets bij de padelhal zelf; het reserveren daar gebeurt zoals nu, de tool is de gedeelde agenda erbovenop.
